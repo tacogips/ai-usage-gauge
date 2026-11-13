@@ -447,33 +447,26 @@ Codex weekly, and Codex credit.
 The selection controls both the charts and the provider summary text and is
 saved in dashboard state.
 
-In the menu bar, use **Settings > Usage icons**. This independent selection is
-saved as `menuBarPieCharts` in `~/.local/ccusage-gauge/state.json` for backward
-compatibility. Both displays default to budget only, and each keeps at least
-one indicator selected. Subscription indicators in the menu bar use the
-provider artwork rather than a separate pie.
+In the menu bar, open **Settings > Menu bar display…**. Usage icons and ratio
+text share one page of on/off switches. Changes are saved immediately, and the
+page stays open so you can change several options together.
 
-Under **Settings > Ratio text**, choose a cost display and select subscription
-percentages independently of the usage icons:
+- **Usage icons** controls the budget and subscription icons. Keep at least one
+  enabled. This selection is independent of the dashboard and is saved as
+  `menuBarPieCharts` in `~/.local/ccusage-gauge/state.json`.
+- Under **Ratio text**, **Cost (USD)** shows the amount spent in the selected
+  period, even without a configured budget. **Budget percentage** independently
+  shows the budget usage percentage. Each subscription switch shows its usage
+  percentage beside the provider icon.
+- Subscription icons use Claude's burst or the ChatGPT knot for Codex. They fill
+  from bottom to top as usage increases, with an outline at 0% and full fill at
+  100%. Unavailable values show an outlined icon with a diagonal slash.
 
-- **Cost only** shows just the amount spent in the selected period, without
-  a budget percentage. It works even when no budget is configured.
-- **Cost and budget ratio** shows the amount spent and puts the budget
-  percentage beside its pie, including the cost warning marker. These two cost
-  display options are mutually exclusive.
-- Each subscription is shown using its provider's official menu-bar mark:
-  Claude's burst or the ChatGPT knot for Codex. The icon is outlined at 0%
-  and fills from bottom to top as usage increases; 100% is fully filled.
-  Template tinting makes it white in a dark menu bar and dark in a light menu bar.
-  Unavailable values show an outlined icon with a diagonal slash.
-  Enable a subscription under **Ratio text** to put its percentage immediately
-  to the right of the icon; leave it disabled for an icon-only display.
-
-Groups appear in a fixed order. An empty ratio selection leaves only the selected
-usage icons. The selection is saved as `menuBarRatioLabels` in `state.json`;
-legacy state defaults to budget text. The cost-only preference is saved as
-`menuBarCostOnly`. Hiding cost text also hides its warning marker, while the
-warning remains in the tooltip, accessibility label, and selected budget pie.
+Groups appear in a fixed order. Ratio selections are saved as
+`menuBarRatioLabels`; cost visibility is saved as `menuBarShowCost`. Existing
+preferences, including `menuBarCostOnly`, retain their display when upgraded.
+Hiding cost text also hides its warning marker, while the warning remains in
+the tooltip, accessibility label, and selected budget pie.
 
 Hovering over the menu-bar item shows a tooltip with the selected indicators
 and, when subscription data has been fetched, one line for each active credit,
@@ -484,10 +477,10 @@ or ratio text.
 To show today's spending amount with only the two weekly usage icons:
 
 1. Choose **Aggregation period > Daily**.
-2. Under **Settings > Usage icons**, enable **Claude Code weekly** and
+2. Open **Settings > Menu bar display…**. Under **Usage icons**, enable **Claude Code weekly** and
    **Codex weekly**, then disable **Budget** and both **5h** items.
-3. Under **Settings > Ratio text**, select **Cost only** and disable all
-   subscription percentages.
+3. On the same page under **Ratio text**, enable **Cost (USD)** and disable
+   **Budget percentage** and all subscription percentages.
 
 The menu bar then shows the two provider icons filling with weekly usage,
 followed by today's spending amount. To add a percentage immediately to an

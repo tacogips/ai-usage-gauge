@@ -33,6 +33,23 @@ import Testing
     #expect(object["menuBarRatioLabels"] as? [String] == [])
   }
 
+  @Test func independentCostPreferencePreservesLegacyDisplay() throws {
+    func decode(_ suffix: String) throws -> AppState {
+      try JSONDecoder().decode(AppState.self, from: Data((#"{"resetCycle":{"type":"daily"}"# + suffix + "}").utf8))
+    }
+    #expect(try decode("").menuBarShowCost)
+    #expect(try decode(#", "menuBarCostOnly":true"#).menuBarShowCost)
+    #expect(try !decode(#", "menuBarRatioLabels":[]"#).menuBarShowCost)
+    let ratioWithoutCost = try decode(#", "menuBarShowCost":false, "menuBarRatioLabels":["budget"]"#)
+    #expect(!ratioWithoutCost.menuBarShowCost)
+    #expect(ratioWithoutCost.menuBarRatioLabels == [.budget])
+    #expect(try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(ratioWithoutCost)) == ratioWithoutCost)
+    let costWithoutRatio = AppState(menuBarRatioLabels: [], menuBarShowCost: true)
+    #expect(costWithoutRatio.menuBarShowCost)
+    #expect(costWithoutRatio.menuBarRatioLabels.isEmpty)
+    #expect(try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(costWithoutRatio)) == costWithoutRatio)
+  }
+
   @Test func dashboardDecodingAndBounds() throws {
     let prefix = #"{"range":"week","customStart":"2026-07-01","customEnd":"2026-07-17","selectedModels":[],"selectedAgents":[],"granularity":"daily","chartMetric":"inputTokens""#
     let legacy = try JSONDecoder().decode(DashboardUIState.self, from: Data((prefix + "}").utf8))

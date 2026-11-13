@@ -4,7 +4,7 @@ import AppKit
 extension MenuBarDelegate {
   func updateStatusTitle(_ budgetText: String) {
     budgetStatusText = budgetText
-    let title = menuBarRatioSelection().contains(.budget) ? budgetText : ""
+    let title = (currentState?.menuBarShowCost ?? true) ? budgetText : ""
     if appliedTitle != title {
       appliedTitle = title
       statusItem.button?.title = title
@@ -25,46 +25,6 @@ extension MenuBarDelegate {
       || menuBarRatioSelection().contains(where: { $0 != .budget }) else { return }
     latestRateLimits = await rateLimitService.current()
     updateStatusTitle(budgetStatusText)
-  }
-
-  @objc func togglePieChart(_ sender: NSMenuItem) {
-    guard let rawValue = sender.representedObject as? String, let id = PieChartID(rawValue: rawValue) else { return }
-    Task {
-      if await mutateState({ $0.menuBarPieCharts = PieChartSelection.toggled(id, in: $0.menuBarPieCharts) }) {
-        updateStatusIcon()
-      }
-    }
-  }
-
-  @objc func toggleRatioLabel(_ sender: NSMenuItem) {
-    guard let rawValue = sender.representedObject as? String, let id = PieChartID(rawValue: rawValue) else { return }
-    Task {
-      if await mutateState({ state in
-        if id == .budget && state.menuBarCostOnly {
-          state.menuBarCostOnly = false
-          state.menuBarRatioLabels = RatioTextSelection.normalized(state.menuBarRatioLabels + [.budget])
-        } else {
-          state.menuBarRatioLabels = RatioTextSelection.toggled(id, in: state.menuBarRatioLabels)
-        }
-      }) {
-        updateStatusTitle(budgetStatusText)
-      }
-    }
-  }
-
-  @objc func toggleCostOnly() {
-    Task {
-      if await mutateState({ state in
-        if state.menuBarCostOnly && state.menuBarRatioLabels.contains(.budget) {
-          state.menuBarRatioLabels = RatioTextSelection.toggled(.budget, in: state.menuBarRatioLabels)
-        } else {
-          state.menuBarCostOnly = true
-          state.menuBarRatioLabels = RatioTextSelection.normalized(state.menuBarRatioLabels + [.budget])
-        }
-      }) {
-        updateStatusTitle(budgetStatusText)
-      }
-    }
   }
 
   func pieEntries() -> [MenuBarPieEntry] {

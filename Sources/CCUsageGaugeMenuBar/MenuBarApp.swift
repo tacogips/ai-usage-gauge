@@ -56,6 +56,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let menu = NSMenu()
+  var displaySettingsWindow: NSWindow?
   var appliedTitle: String?
   private var appliedIconState: StatusIconState?
   private let launchAtLoginController: LaunchAtLoginControlling
@@ -441,11 +442,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       error.isEnabled = false
       submenu.addItem(error)
     }
-    submenu.addItem(PieChartMenu.item(selection: menuBarPieSelection(), target: self, action: #selector(togglePieChart(_:))))
-    submenu.addItem(PieChartMenu.ratioTextItem(
-      selection: menuBarRatioSelection(), costOnly: currentState?.menuBarCostOnly ?? false,
-      target: self, action: #selector(toggleRatioLabel(_:)), costAction: #selector(toggleCostOnly)
-    ))
+    let display = submenu.addItem(withTitle: "Menu bar display…", action: #selector(showDisplaySettings), keyEquivalent: "")
+    display.target = self
+    display.isEnabled = stateStore != nil
     root.submenu = submenu
     return root
   }
