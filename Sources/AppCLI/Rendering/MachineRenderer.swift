@@ -1,0 +1,139 @@
+import AppCore
+import Foundation
+
+/// Renders machine descriptors and machine-status responses as compact text.
+/// The renderer only reports the identity-file path already returned by the
+/// server; it never opens or reads identity-file contents.
+enum MachineRenderer {
+  static func list(_ response: MachinesResponse) -> String {
+    guard !response.machines.isEmpty else { return "No machines registered." }
+    return response.machines.map(descriptorLine).joined(separator: "\n")
+  }
+
+  static func show(_ descriptor: MachineDescriptor) -> String {
+    detail(descriptor)
+  }
+
+  static func added(_ descriptor: MachineDescriptor) -> String {
+    "Created machine \(descriptor.id)\n" + detail(descriptor)
+  }
+
+  static func updated(_ descriptor: MachineDescriptor) -> String {
+    "Updated machine \(descriptor.id)\n" + detail(descriptor)
+  }
+
+  static func status(_ response: MachineStatusResponse) -> String {
+    var lines = ["requested: \(response.requested)"]
+    for item in response.machines {
+      var fields = [
+        "\(item.id) [\(item.collectionState.rawValue)]",
+        "\(item.displayName)",
+        item.enabled ? "enabled" : "disabled",
+        "snapshot=\(item.snapshotAvailable ? "yes" : "no")"
+      ]
+      if item.stale { fields.append("stale") }
+      if item.collectionInProgress { fields.append("collecting") }
+      if let coverage = item.coverageStart { fields.append("coverage=\(coverage)") }
+      if let error = item.lastError { fields.append("error=\(error.code)") }
+      if let unavailable = item.unavailableSince { fields.append("unavailableSince=\(unavailable.ISO8601Format())") }
+      lines.append(fields.joined(separator: "  "))
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  static func loadStatus(_ response: MachineLoadStatusResponse) -> String {
+    var lines = [
+      "requested: \(response.requested)",
+      "phase: \(response.phase.rawValue) (\(response.completed)/\(response.total)) loading=\(response.isLoading)"
+    ]
+    for item in response.machines {
+      var fields = [
+        "\(item.id) [\(item.phase.rawValue)]",
+        "\(item.completed)/\(item.total)",
+        "loading=\(item.isLoading)"
+      ]
+      if let coverage = item.coverageStart { fields.append("coverage=\(coverage)") }
+      lines.append(fields.joined(separator: "  "))
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  static func connectionTest(_ response: MachineConnectionTestResponse) -> String {
+    var lines = ["\(response.machine): \(response.status)"]
+    appendDiagnostic(response.diagnostic, to: &lines)
+    return lines.joined(separator: "\n")
+  }
+
+  static func refresh(_ response: RefreshResponse) -> String {
+    var lines = [
+      "\(response.requested): \(response.status)",
+      "refreshed: \(response.refreshedMachineIds.joined(separator: ", "))",
+      "failed: \(response.failedMachineIds.joined(separator: ", "))"
+    ]
+    appendDiagnostic(response.diagnostic, to: &lines)
+    return lines.joined(separator: "\n")
+  }
+
+  private static func descriptorLine(_ descriptor: MachineDescriptor) -> String {
+    var fields = [
+      descriptor.id,
+      descriptor.displayName,
+      descriptor.kind.rawValue,
+      descriptor.enabled ? "enabled" : "disabled"
+    ]
+    if let ssh = descriptor.ssh {
+      fields.append("\(ssh.user)@\(ssh.host):\(ssh.port)")
+    } else {
+      fields.append("-")
+    }
+    return fields.joined(separator: "  ")
+  }
+
+  private static func detail(_ descriptor: MachineDescriptor) -> String {
+    var lines = [
+      "id: \(descriptor.id)",
+      "displayName: \(descriptor.displayName)",
+      "kind: \(descriptor.kind.rawValue)",
+      "enabled: \(descriptor.enabled)",
+      "includeDefaultCodexDir: \(descriptor.includeDefaultCodexDir)",
+      "codexSessionDirs: \(descriptor.codexSessionDirs.isEmpty ? "-" : descriptor.codexSessionDirs.joined(separator: ", "))",
+      "includeDefaultClaudeDir: \(descriptor.includeDefaultClaudeDir)",
+      "claudeConfigDirs: \(descriptor.claudeConfigDirs.isEmpty ? "-" : descriptor.claudeConfigDirs.joined(separator: ", "))"
+    ]
+    if let ssh = descriptor.ssh {
+      lines.append("ssh.host: \(ssh.host)")
+      lines.append("ssh.port: \(ssh.port)")
+      lines.append("ssh.user: \(ssh.user)")
+      lines.append("ssh.identityFile: \(ssh.identityFile ?? "-")")
+      lines.append("ssh.remoteCcusagePath: \(ssh.remoteCcusagePath)")
+      lines.append("ssh.extraOptions: \(ssh.extraOptions.isEmpty ? "-" : ssh.extraOptions.joined(separator: " "))")
+      switch ssh.proxy {
+      case nil:
+        lines.append("ssh.proxy.kind: direct")
+      case .direct:
+        lines.append("ssh.proxy.kind: direct")
+      case .jump(let jump):
+        lines.append("ssh.proxy.kind: jump")
+        lines.append("ssh.proxy.host: \(jump.host)")
+        lines.append("ssh.proxy.port: \(jump.port)")
+        lines.append("ssh.proxy.user: \(jump.user)")
+        lines.append("ssh.proxy.identityFile: \(jump.identityFile ?? "-")")
+        lines.append("ssh.proxy.knownHostsFile: \(jump.knownHostsFile ?? "-")")
+      case .command(let executable):
+        lines.append("ssh.proxy.kind: command")
+        lines.append("ssh.proxy.executable: \(executable)")
+      }
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  private static func appendDiagnostic(
+    _ diagnostic: SanitizedCollectionError?,
+    to lines: inout [String]
+  ) {
+    guard let diagnostic else { return }
+    lines.append("diagnostic: \(diagnostic.code)")
+    if let detail = diagnostic.detail { lines.append("detail: \(detail)") }
+    if let remediation = diagnostic.remediation { lines.append("remediation: \(remediation)") }
+  }
+}
