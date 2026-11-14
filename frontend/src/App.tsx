@@ -1,0 +1,474 @@
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
+import { type BudgetResponse, type CostRow, type CostSeriesResponse, type MetricRow, type MetricsResponse, getJSON } from "./api";
+
+type QuickRange = "recent12h" | "today" | "yesterday" | "week" | "month";
+type Range = QuickRange | "custom";
+type MetricKey = "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
+type Granularity = "15min" | "hourly" | "daily";
+
+const quickRanges: Array<[QuickRange, string]> = [
+  ["recent12h", "Last 12 hours"], ["today", "Today"], ["yesterday", "Yesterday"], ["week", "This week"], ["month", "This month"]
+];
+const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const integer = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const percentage = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+const dateText = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const localDate = () => dateText(new Date());
+const daysAgo = (days: number) => { const date = new Date(); date.setDate(date.getDate() - days); return dateText(date); };
+const metricValue = (row: Pick<MetricRow, MetricKey>, metric: MetricKey) => row[metric];
+const chartMetrics: Array<[MetricKey, string]> = [
+  ["costUSD", "Cost"],
+  ["totalTokens", "Total tokens"],
+  ["inputTokens", "Input tokens"],
+  ["outputTokens", "Output tokens"],
+  ["cacheReadTokens", "Cache read tokens"],
+  ["cacheCreationTokens", "Cache creation tokens"],
+];
+
+const chartHeight = 360;
+const chartMargin = { top: 16, right: 16, bottom: 54, left: 78 };
+const yTickCount = 4;
+const lazyRenderWindowMilliseconds = 12 * 60 * 60 * 1_000;
+const chartSlotWidths: Record<Granularity, number> = { "15min": 32, hourly: 96, daily: 72 };
+const modelColors = ["#238855", "#3f75b5", "#b86f32", "#7b5eb5", "#b84f6f", "#468a86", "#8a7a35", "#596d7a"];
+
+function bucketMilliseconds(granularity: Granularity) {
+  switch (granularity) {
+  case "15min": return 15 * 60 * 1_000;
+  case "hourly": return 60 * 60 * 1_000;
+  case "daily": return 24 * 60 * 60 * 1_000;
+  }
+}
+
+function chartDateLabel(timestamp: string, granularity: Granularity) {
+  const date = new Date(timestamp);
+  return {
+    date: date.toLocaleDateString([], { month: "short", day: "numeric" }),
+    time: granularity === "daily" ? undefined : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
+}
+
+function niceChartMaximum(value: number) {
+  if (value <= 0) return 1;
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const normalized = value / magnitude;
+  const rounded = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return rounded * magnitude;
+}
+
+function axisCurrency(value: number, step: number) {
+  const fractionDigits = step >= 1 ? 2 : Math.min(6, Math.max(2, Math.ceil(-Math.log10(step)) + 1));
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: fractionDigits,
+  }).format(value);
+}
+
+function Bars(props: {
+  rows: CostRow[];
+  granularity: Granularity;
+  label: string;
+  metric: MetricKey;
+  modelDomain: string[];
+  timelineStart?: string;
+  timelineEndExclusive?: string;
+  onLazyLoadingChange: (isLoading: boolean) => void;
+}) {
+  const [hoveredSegment, setHoveredSegment] = createSignal<{ bucketIndex: number; model: string } | null>(null);
+  const [loadedAfter, setLoadedAfter] = createSignal(Number.NEGATIVE_INFINITY);
+  const [isLoadingEarlier, setIsLoadingEarlier] = createSignal(false);
+  let chartElement: HTMLDivElement | undefined;
+  let lazyLoadFrame: number | undefined;
+  let renderFrame: number | undefined;
+  let completionFrame: number | undefined;
+  const cancelScheduledLazyLoad = () => {
+    if (lazyLoadFrame != null) window.cancelAnimationFrame(lazyLoadFrame);
+    if (renderFrame != null) window.cancelAnimationFrame(renderFrame);
+    if (completionFrame != null) window.cancelAnimationFrame(completionFrame);
+    lazyLoadFrame = undefined;
+    renderFrame = undefined;
+    completionFrame = undefined;
+  };
+  const models = createMemo(() => [...new Set(props.rows.map((row) => row.model))].sort());
+  const colorForModel = (model: string) => modelColors[Math.max(props.modelDomain.indexOf(model), 0) % modelColors.length];
+  const occupiedPoints = createMemo(() => {
+    const grouped = new Map<string, Map<string, number>>();
+    for (const row of props.rows) {
+      const bucket = new Date(row.timestamp);
+      if (props.granularity === "15min") bucket.setMinutes(Math.floor(bucket.getMinutes() / 15) * 15, 0, 0);
+      else if (props.granularity === "hourly") bucket.setMinutes(0, 0, 0);
+      else bucket.setHours(0, 0, 0, 0);
+      const key = bucket.toISOString();
+      const modelValues = grouped.get(key) ?? new Map<string, number>();
+      modelValues.set(row.model, (modelValues.get(row.model) ?? 0) + metricValue(row, props.metric));
+      grouped.set(key, modelValues);
+    }
+    return [...grouped]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([timestamp, modelValues]) => ({
+        timestamp,
+        segments: [...modelValues].sort(([left], [right]) => left.localeCompare(right)).map(([model, value]) => ({ model, value })),
+        total: [...modelValues.values()].reduce((sum, value) => sum + value, 0),
+      }));
+  });
+  const points = createMemo(() => {
+    const occupied = occupiedPoints();
+    if (props.granularity !== "hourly" || props.timelineStart == null || props.timelineEndExclusive == null) return occupied;
+    const start = new Date(props.timelineStart);
+    const endExclusive = new Date(props.timelineEndExclusive);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(endExclusive.getTime()) || start >= endExclusive) return occupied;
+    start.setMinutes(0, 0, 0);
+    const occupiedByTimestamp = new Map(occupied.map((point) => [point.timestamp, point]));
+    const continuous = [];
+    for (let timestamp = start.getTime(); timestamp < endExclusive.getTime(); timestamp += bucketMilliseconds("hourly")) {
+      const key = new Date(timestamp).toISOString();
+      continuous.push(occupiedByTimestamp.get(key) ?? { timestamp: key, segments: [], total: 0 });
+    }
+    return continuous;
+  });
+  const firstTimestamp = createMemo(() => points()[0] == null ? 0 : new Date(points()[0].timestamp).getTime());
+  const lastTimestamp = createMemo(() => points().at(-1) == null ? 0 : new Date(points().at(-1)!.timestamp).getTime());
+  const bucketCount = createMemo(() => points().length === 0
+    ? 0
+    : Math.round((lastTimestamp() - firstTimestamp()) / bucketMilliseconds(props.granularity)) + 1);
+  const visiblePoints = createMemo(() => points().filter((point) => new Date(point.timestamp).getTime() >= loadedAfter()));
+  const axisMaximum = createMemo(() => niceChartMaximum(Math.max(...visiblePoints().map((point) => point.total), 0)));
+  const yTicks = createMemo(() => Array.from({ length: yTickCount + 1 }, (_, index) => (axisMaximum() / yTickCount) * index));
+  const chartWidth = createMemo(() => Math.max(1_100, chartMargin.left + chartMargin.right + bucketCount() * chartSlotWidths[props.granularity]));
+  const plotHeight = chartHeight - chartMargin.top - chartMargin.bottom;
+  const plotWidth = () => chartWidth() - chartMargin.left - chartMargin.right;
+  const barSlotWidth = () => plotWidth() / Math.max(bucketCount(), 1);
+  const barWidth = () => Math.min(28, barSlotWidth() * 0.65);
+  const bucketIndex = (timestamp: string) => Math.round((new Date(timestamp).getTime() - firstTimestamp()) / bucketMilliseconds(props.granularity));
+  const loadEarlier = () => {
+    if (props.granularity === "daily" || loadedAfter() <= firstTimestamp() || isLoadingEarlier()) return;
+    const boundaryIndex = Math.max(0, (loadedAfter() - firstTimestamp()) / bucketMilliseconds(props.granularity));
+    const boundaryX = chartMargin.left + boundaryIndex * barSlotWidth();
+    if ((chartElement?.scrollLeft ?? 0) > boundaryX + 160) return;
+    setIsLoadingEarlier(true);
+    props.onLazyLoadingChange(true);
+    lazyLoadFrame = window.requestAnimationFrame(() => {
+      renderFrame = window.requestAnimationFrame(() => {
+        setLoadedAfter((current) => Math.max(firstTimestamp(), current - lazyRenderWindowMilliseconds));
+        completionFrame = window.requestAnimationFrame(() => {
+          setIsLoadingEarlier(false);
+          props.onLazyLoadingChange(false);
+          lazyLoadFrame = undefined;
+          renderFrame = undefined;
+          completionFrame = undefined;
+        });
+      });
+    });
+  };
+  const scrollToLatest = () => {
+    if (chartElement) chartElement.scrollLeft = chartElement.scrollWidth - chartElement.clientWidth;
+  };
+  const formatValue = (value: number) => props.metric === "costUSD" ? currency.format(value) : integer.format(value);
+  const yAxisTitle = () => props.metric === "costUSD" ? "Spent amount (USD)" : "Tokens";
+  const metricLabel = () => chartMetrics.find(([key]) => key === props.metric)?.[1] ?? "Value";
+  const hoveredPoint = createMemo(() => {
+    const hovered = hoveredSegment();
+    if (hovered == null) return null;
+    const point = visiblePoints()[hovered.bucketIndex];
+    if (!point) return null;
+    const segmentIndex = point.segments.findIndex(({ model }) => model === hovered.model);
+    const segment = point.segments[segmentIndex];
+    if (!segment) return null;
+    const stackedValue = point.segments.slice(0, segmentIndex + 1).reduce((sum, item) => sum + item.value, 0);
+    const centerX = chartMargin.left + barSlotWidth() * bucketIndex(point.timestamp) + barSlotWidth() / 2;
+    const height = (stackedValue / axisMaximum()) * plotHeight;
+    return {
+      label: new Date(point.timestamp).toLocaleString(),
+      model: segment.model,
+      value: segment.value,
+      x: Math.max(chartMargin.left, Math.min(centerX - 150, chartWidth() - chartMargin.right - 300)),
+      y: Math.max(8, chartMargin.top + plotHeight - height - 62),
+    };
+  });
+  createEffect(() => {
+    const latest = lastTimestamp();
+    const earliest = firstTimestamp();
+    const granularity = props.granularity;
+    cancelScheduledLazyLoad();
+    setIsLoadingEarlier(false);
+    props.onLazyLoadingChange(false);
+    setLoadedAfter(granularity === "daily" ? earliest : Math.max(earliest, latest - lazyRenderWindowMilliseconds));
+    queueMicrotask(scrollToLatest);
+  });
+  onMount(() => queueMicrotask(scrollToLatest));
+  onCleanup(() => {
+    cancelScheduledLazyLoad();
+    props.onLazyLoadingChange(false);
+  });
+  return (
+    <div class="chart-wrap" role="img" aria-label={`${props.label} ${props.metric} by ${props.granularity} and model`}>
+      <Show when={points().length > 0} fallback={<div class="chart"><p class="empty">No usage matches this period and model filter.</p></div>}>
+        <div class="chart-legend" aria-hidden="true">
+          <For each={models()}>{(model) => <span title={model}><i style={{ background: colorForModel(model) }} />{model}</span>}</For>
+        </div>
+        <Show when={props.granularity !== "daily"}>
+          <p class="chart-scroll-hint">Newest data is shown first. Scroll left to render earlier 12-hour windows.</p>
+        </Show>
+        <div class="chart" ref={chartElement} onScroll={loadEarlier}>
+          <svg class="cost-chart" width={chartWidth()} height={chartHeight} viewBox={`0 0 ${chartWidth()} ${chartHeight}`} aria-hidden="true">
+          <text class="axis-title" x="16" y={chartMargin.top + plotHeight / 2} text-anchor="middle" transform={`rotate(-90 16 ${chartMargin.top + plotHeight / 2})`}>{yAxisTitle()}</text>
+          <For each={yTicks()}>{(tick) => {
+            const y = () => chartMargin.top + plotHeight - (tick / axisMaximum()) * plotHeight;
+            return <>
+              <line class="chart-grid-line" x1={chartMargin.left} x2={chartWidth() - chartMargin.right} y1={y()} y2={y()} />
+              <text class="y-axis-label" x={chartMargin.left - 10} y={y()} text-anchor="end" dominant-baseline="middle">{props.metric === "costUSD" ? axisCurrency(tick, axisMaximum() / yTickCount) : integer.format(tick)}</text>
+            </>;
+          }}</For>
+          <For each={visiblePoints()}>{(point, index) => {
+            const x = () => chartMargin.left + barSlotWidth() * bucketIndex(point.timestamp) + (barSlotWidth() - barWidth()) / 2;
+            const label = () => chartDateLabel(point.timestamp, props.granularity);
+            const showsLabel = () => props.granularity !== "15min" || bucketIndex(point.timestamp) % 4 === 0;
+            return <>
+              <For each={point.segments}>{(segment, segmentIndex) => {
+                const precedingValue = () => point.segments.slice(0, segmentIndex()).reduce((sum, item) => sum + item.value, 0);
+                const height = () => (segment.value / axisMaximum()) * plotHeight;
+                const y = () => chartMargin.top + plotHeight - ((precedingValue() + segment.value) / axisMaximum()) * plotHeight;
+                return <rect class="cost-bar" fill={colorForModel(segment.model)} x={x()} y={y()} width={barWidth()} height={height()} rx="2"
+                  onMouseEnter={() => setHoveredSegment({ bucketIndex: index(), model: segment.model })} onMouseLeave={() => setHoveredSegment(null)}>
+                  <title>{`${new Date(point.timestamp).toLocaleString()} · ${segment.model}: ${formatValue(segment.value)}`}</title>
+                </rect>;
+              }}</For>
+              <Show when={showsLabel()}>
+                <text class="x-axis-label" x={x() + barWidth() / 2} y={chartMargin.top + plotHeight + 16} text-anchor="middle">
+                  <tspan x={x() + barWidth() / 2}>{label().date}</tspan>
+                  <Show when={label().time}>{(time) => <tspan x={x() + barWidth() / 2} dy="12">{time()}</tspan>}</Show>
+                </text>
+              </Show>
+            </>;
+          }}</For>
+          <Show when={hoveredPoint()} keyed>{(point) => (
+            <g class="chart-tooltip" transform={`translate(${point.x} ${point.y})`} pointer-events="none">
+              <rect width="300" height="54" rx="7" />
+              <text class="chart-tooltip-label" x="12" y="20">{point.label}</text>
+              <text class="chart-tooltip-value" x="12" y="41">{point.model} · {metricLabel()}: {formatValue(point.value)}</text>
+            </g>
+          )}</Show>
+          </svg>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+function LoadingState() {
+  return (
+    <section class="loading-state" role="status" aria-live="polite">
+      <div class="loading-spinner" aria-hidden="true" />
+      <div>
+        <strong>Loading usage data…</strong>
+        <p>Reading ccusage metrics and preparing the dashboard.</p>
+      </div>
+    </section>
+  );
+}
+
+export default function App() {
+  const [range, setRange] = createSignal<Range>("recent12h");
+  const [customStart, setCustomStart] = createSignal(daysAgo(6));
+  const [customEnd, setCustomEnd] = createSignal(localDate());
+  const [selectedModels, setSelectedModels] = createSignal<string[]>([]);
+  const [selectedAgents, setSelectedAgents] = createSignal<string[]>([]);
+  const [granularity, setGranularity] = createSignal<Granularity>("hourly");
+  const [chartMetric, setChartMetric] = createSignal<MetricKey>("costUSD");
+  const [isGraphLazyLoading, setIsGraphLazyLoading] = createSignal(false);
+  const [isRefreshing, setIsRefreshing] = createSignal(false);
+  const [isRangeLoading, setIsRangeLoading] = createSignal(false);
+  const [rangeLoadStarted, setRangeLoadStarted] = createSignal(false);
+
+  const periodPath = createMemo(() => range() === "custom"
+    ? `/api/metrics?range=custom&start=${customStart()}&end=${customEnd()}`
+    : `/api/metrics?range=${range()}`);
+  const [period, { refetch: refreshPeriod }] = createResource(periodPath, (path) => getJSON<MetricsResponse>(path));
+  const costPath = createMemo(() => range() === "custom"
+    ? `/api/cost-series?granularity=${granularity()}&range=custom&start=${customStart()}&end=${customEnd()}`
+    : `/api/cost-series?granularity=${granularity()}&range=${range()}`);
+  const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, (path) => getJSON<CostSeriesResponse>(path));
+  const [budget, { refetch: refreshBudget }] = createResource(() => getJSON<BudgetResponse>("/api/budget"));
+
+  const models = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.model))].sort());
+  const agents = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.agent))].sort());
+  createEffect(() => {
+    const available = new Set(models());
+    setSelectedModels((current) => {
+      const next = current.filter((model) => available.has(model));
+      return next.length === current.length ? current : next;
+    });
+  });
+  createEffect(() => {
+    const available = new Set(agents());
+    setSelectedAgents((current) => {
+      const next = current.filter((agent) => available.has(agent));
+      return next.length === current.length ? current : next;
+    });
+  });
+  const filteredRows = createMemo(() => (period()?.rows ?? []).filter((row) =>
+    (selectedModels().length === 0 || selectedModels().includes(row.model)) &&
+    (selectedAgents().length === 0 || selectedAgents().includes(row.agent))));
+  const filteredCostRows = createMemo(() => (costSeries()?.rows ?? []).filter((row) =>
+    (selectedModels().length === 0 || selectedModels().includes(row.model)) &&
+    (selectedAgents().length === 0 || selectedAgents().includes(row.agent))));
+  const total = (key: MetricKey) => filteredRows().reduce((sum, row) => sum + metricValue(row, key), 0);
+  const chartTotal = createMemo(() => filteredCostRows().reduce((sum, row) => sum + metricValue(row, chartMetric()), 0));
+  const chartMetricLabel = createMemo(() => chartMetrics.find(([value]) => value === chartMetric())?.[1] ?? "Cost");
+  const chartTitle = createMemo(() => `${chartMetricLabel()} over time by model`);
+  const formattedChartTotal = createMemo(() => chartMetric() === "costUSD" ? currency.format(chartTotal()) : integer.format(chartTotal()));
+  const rangeLabel = createMemo(() => range() === "custom" ? `${customStart()} – ${customEnd()}` : quickRanges.find(([value]) => value === range())?.[1] ?? "Selected period");
+  const filterLabel = createMemo(() => selectedModels().length === 0 ? "All models" : `${selectedModels().length} selected`);
+  const errorMessage = createMemo(() => period.error?.message ?? costSeries.error?.message ?? budget.error?.message);
+  const isInitialLoading = createMemo(() => period() == null || costSeries() == null || budget() == null);
+  const isBlockingLoading = createMemo(() => isInitialLoading() || isRangeLoading());
+  const isBackgroundLoading = createMemo(() => !isBlockingLoading() &&
+    (isRefreshing() || period.loading || costSeries.loading || budget.loading));
+  const toggle = (value: string, values: () => string[], setter: (next: string[]) => void) => setter(values().includes(value) ? values().filter((item) => item !== value) : [...values(), value]);
+  let refreshPromise: Promise<unknown> | undefined;
+  const refresh = () => {
+    if (refreshPromise) return refreshPromise;
+    setIsRefreshing(true);
+    refreshPromise = getJSON<{ status: string }>("/api/refresh")
+      .then(() => Promise.all([refreshPeriod(), refreshCostSeries(), refreshBudget()]))
+      .finally(() => {
+        refreshPromise = undefined;
+        setIsRefreshing(false);
+    });
+    return refreshPromise;
+  };
+  const beginRangeLoad = () => {
+    setRangeLoadStarted(false);
+    setIsRangeLoading(true);
+  };
+  const selectRange = (next: Range) => {
+    if (next === range()) return;
+    beginRangeLoad();
+    setRange(next);
+  };
+  const updateCustomStart = (value: string) => {
+    if (value === customStart()) return;
+    beginRangeLoad();
+    setCustomStart(value);
+  };
+  const updateCustomEnd = (value: string) => {
+    if (value === customEnd()) return;
+    beginRangeLoad();
+    setCustomEnd(value);
+  };
+  const selectGranularity = (next: Granularity) => {
+    if (next === granularity()) return;
+    beginRangeLoad();
+    setGranularity(next);
+    if (next === "daily" && range() === "recent12h") selectRange("today");
+  };
+  createEffect(() => {
+    if (!isRangeLoading()) return;
+    if (period.loading || costSeries.loading) {
+      setRangeLoadStarted(true);
+    } else if (rangeLoadStarted()) {
+      setIsRangeLoading(false);
+      setRangeLoadStarted(false);
+    }
+  });
+  createEffect(() => {
+    const intervalSeconds = budget()?.refreshIntervalSeconds ?? 20;
+    const timer = window.setInterval(refresh, Math.max(intervalSeconds, 1) * 1_000);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  return (
+    <div class="app-shell">
+      <aside class="model-sidebar" aria-label="Usage filters">
+        <div class="brand-mark" aria-hidden="true"><span /></div>
+        <div><p class="eyebrow">FILTER USAGE</p><h2>Models</h2></div>
+        <button classList={{ "model-choice": true, active: selectedModels().length === 0 }} onClick={() => setSelectedModels([])}><span>All models</span></button>
+        <div class="model-list">
+          <For each={models()} fallback={<p class="muted">{period.loading ? "Loading models…" : "No models in the selected period."}</p>}>{(model) => (
+            <label classList={{ "model-choice": true, active: selectedModels().includes(model) }}>
+              <input type="checkbox" checked={selectedModels().includes(model)} onChange={() => toggle(model, selectedModels, setSelectedModels)} />
+              <span title={model}>{model}</span>
+            </label>
+          )}</For>
+        </div>
+        <div class="agent-filter"><p class="eyebrow">AGENTS</p><div class="agent-buttons">
+          <For each={agents()}>{(agent) => <button classList={{ active: selectedAgents().includes(agent) }} onClick={() => toggle(agent, selectedAgents, setSelectedAgents)}>{agent}</button>}</For>
+        </div></div>
+        <p class="filter-note">Each row is an exact ccusage daily agent/model breakdown. Costs and tokens are summed only from matching rows.</p>
+      </aside>
+
+      <main class="content" aria-busy={isBlockingLoading() || isBackgroundLoading()}>
+        <header>
+          <div><p class="eyebrow">CCUSAGE DETAILED METRICS</p><h1>ccusage-gauge</h1></div>
+          <div class="period-control" aria-label="Aggregation period">
+            <div class="range-buttons">
+              <For each={quickRanges}>{([value, label]) => <button classList={{ active: range() === value }} onClick={() => selectRange(value)}>{label}</button>}</For>
+              <button classList={{ active: range() === "custom" }} onClick={() => selectRange("custom")}>Custom</button>
+              <button class="refresh" onClick={refresh}>Refresh</button>
+              <span classList={{ "background-refresh-status": true, visible: isBackgroundLoading() }} role="status" aria-live="polite">
+                <span class="refresh-spinner" aria-hidden="true" />Updating…
+              </span>
+            </div>
+            <Show when={range() === "custom"}><div class="custom-calendar" role="group" aria-label="Custom date range">
+              <label>From<input aria-label="Custom range start" type="date" value={customStart()} max={customEnd()} onInput={(event) => updateCustomStart(event.currentTarget.value)} /></label>
+              <span>to</span>
+              <label>To<input aria-label="Custom range end" type="date" value={customEnd()} min={customStart()} onInput={(event) => updateCustomEnd(event.currentTarget.value)} /></label>
+            </div></Show>
+          </div>
+        </header>
+
+        <Show when={!errorMessage()} fallback={<section class="error"><span>{errorMessage()}</span><button onClick={refresh}>Retry</button></section>}>
+          <Show when={!isBlockingLoading()} fallback={<LoadingState />}>
+            <section class="stats metric-stats">
+            <article><span>Selected cost</span><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></article>
+            <article><span>Total tokens</span><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></article>
+            <article><span>Input / output</span><strong>{integer.format(total("inputTokens"))} / {integer.format(total("outputTokens"))}</strong><small>Prompt and generated</small></article>
+            <article><span>Cache read / creation</span><strong>{integer.format(total("cacheReadTokens"))} / {integer.format(total("cacheCreationTokens"))}</strong><small>Reported by ccusage</small></article>
+            </section>
+
+            <section class="panel usage-panel">
+            <div class="panel-title"><div><p class="eyebrow">AGGREGATED USAGE</p><div class="chart-heading"><h2>{chartTitle()}</h2>
+              <Show when={isGraphLazyLoading()}><span class="graph-loading-status" role="status" aria-label="Rendering earlier graph data"><span class="graph-loading-spinner" aria-hidden="true" /></span></Show>
+            </div></div>
+              <div class="granularity-control" aria-label="Graph aggregation">
+                <label class="metric-selector">Metric
+                  <select value={chartMetric()} onChange={(event) => setChartMetric(event.currentTarget.value as MetricKey)}>
+                    <For each={chartMetrics}>{([value, label]) => <option value={value}>{label}</option>}</For>
+                  </select>
+                </label>
+                <div><button classList={{ active: granularity() === "15min" }} onClick={() => selectGranularity("15min")}>15 min</button><button classList={{ active: granularity() === "hourly" }} onClick={() => selectGranularity("hourly")}>Hourly</button><button classList={{ active: granularity() === "daily" }} onClick={() => selectGranularity("daily")}>Daily</button></div>
+                <strong>{formattedChartTotal()}</strong>
+              </div>
+            </div>
+            <Bars
+              rows={filteredCostRows()}
+              granularity={granularity()}
+              label={rangeLabel()}
+              metric={chartMetric()}
+              modelDomain={models()}
+              timelineStart={costSeries()?.timelineStart}
+              timelineEndExclusive={costSeries()?.timelineEndExclusive}
+              onLazyLoadingChange={setIsGraphLazyLoading}
+            />
+            </section>
+
+            <section class="panel block-panel">
+            <div class="panel-title"><div><p class="eyebrow">CCUSAGE BREAKDOWNS</p><h2>Daily agent and model detail</h2></div></div>
+            <div class="metric-table" role="table">
+              <div class="metric-row metric-head" role="row"><span>Date</span><span>Agent</span><span>Model</span><span>Cost</span><span>Total tokens</span></div>
+              <For each={filteredRows().slice().reverse()} fallback={<p class="empty compact">No matching metric rows.</p>}>{(row) => (
+                <div class="metric-row" role="row"><time>{row.date}</time><span class="agent-tag">{row.agent}</span><strong title={row.model}>{row.model}</strong><span>{currency.format(row.costUSD)}</span><span>{integer.format(row.totalTokens)}</span></div>
+              )}</For>
+            </div>
+            </section>
+
+            <section class="budget-note">
+              Menu budget: {currency.format(budget()?.spentUSD ?? 0)} in selected period · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
+            </section>
+          </Show>
+        </Show>
+      </main>
+    </div>
+  );
+}
