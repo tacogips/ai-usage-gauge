@@ -1,9 +1,4 @@
 import Foundation
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 
 public enum CCUsageRunnerKind: String, Sendable {
   case local
@@ -34,201 +29,6 @@ public struct CCUsageCommandFailure: Error, Equatable, Sendable {
     self.phase = phase
     self.exitStatus = exitStatus
     self.stderr = String(stderr.prefix(4_096))
-  }
-}
-
-public enum ProcessTerminationReason: Equatable, Sendable {
-  case exit
-  case uncaughtSignal
-}
-
-public struct ProcessResult: Equatable, Sendable {
-  public let stdout: Data
-  public let stderr: Data
-  public let exitStatus: Int32
-  public let terminationReason: ProcessTerminationReason
-
-  public init(
-    stdout: Data,
-    stderr: Data,
-    exitStatus: Int32,
-    terminationReason: ProcessTerminationReason = .exit
-  ) {
-    self.stdout = stdout
-    self.stderr = stderr
-    self.exitStatus = exitStatus
-    self.terminationReason = terminationReason
-  }
-}
-
-public enum ProcessExecutionFailure: Error, Equatable, Sendable {
-  case spawnFailed
-  case timedOut
-}
-
-public protocol CCUsageProcessRunning: Sendable {
-  func run(executable: URL, arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult
-}
-
-public protocol CCUsageEnvironmentProcessRunning: CCUsageProcessRunning {
-  func run(
-    executable: URL,
-    arguments: [String],
-    environment: [String: String],
-    timeoutSeconds: TimeInterval
-  ) async throws -> ProcessResult
-}
-
-public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
-  public init() {}
-
-  public func run(
-    executable: URL,
-    arguments: [String],
-    timeoutSeconds: TimeInterval = 30
-  ) async throws -> ProcessResult {
-    try await runProcess(executable: executable, arguments: arguments, environment: nil, timeoutSeconds: timeoutSeconds)
-  }
-
-  public func run(
-    executable: URL,
-    arguments: [String],
-    environment: [String: String],
-    timeoutSeconds: TimeInterval
-  ) async throws -> ProcessResult {
-    try await runProcess(executable: executable, arguments: arguments, environment: environment, timeoutSeconds: timeoutSeconds)
-  }
-
-  private func runProcess(
-    executable: URL,
-    arguments: [String],
-    environment: [String: String]?,
-    timeoutSeconds: TimeInterval
-  ) async throws -> ProcessResult {
-    let worker = Task.detached(priority: .utility) {
-      let process = Process()
-      let stdout = Pipe()
-      let stderr = Pipe()
-      process.executableURL = executable
-      process.arguments = arguments
-      process.environment = environment
-      process.standardOutput = stdout
-      process.standardError = stderr
-      #if canImport(Glibc)
-      do { try Self.launchWithUnblockedSignals(process) } catch { throw ProcessExecutionFailure.spawnFailed }
-      #else
-      do { try process.run() } catch { throw ProcessExecutionFailure.spawnFailed }
-      #endif
-      let processID = process.processIdentifier
-      let ownsProcessGroup = setpgid(processID, processID) == 0
-
-      let outHandle = stdout.fileHandleForReading
-      let errHandle = stderr.fileHandleForReading
-      let outDescriptor = dup(outHandle.fileDescriptor)
-      let errDescriptor = dup(errHandle.fileDescriptor)
-      guard outDescriptor >= 0, errDescriptor >= 0 else {
-        if outDescriptor >= 0 { close(outDescriptor) }
-        if errDescriptor >= 0 { close(errDescriptor) }
-        signalProcess(processID, signal: SIGKILL, processGroup: ownsProcessGroup)
-        throw ProcessExecutionFailure.spawnFailed
-      }
-      let outTask = Task.detached(priority: .utility) { await readPipe(outDescriptor) }
-      let errTask = Task.detached(priority: .utility) { await readPipe(errDescriptor) }
-
-      let deadline = Date().addingTimeInterval(timeoutSeconds)
-      while process.isRunning && !Task.isCancelled && Date() < deadline {
-        // Cancellation must flow through the termination path below. Letting
-        // sleep throw here abandons a live subprocess, and the pipe readers
-        // then keep the cancelled task (and registry deletion) suspended.
-        try? await Task.sleep(for: .milliseconds(20))
-      }
-      let wasCancelled = Task.isCancelled
-      if process.isRunning {
-        signalProcess(processID, signal: SIGTERM, processGroup: ownsProcessGroup)
-        let terminationDeadline = Date().addingTimeInterval(0.25)
-        while process.isRunning && Date() < terminationDeadline {
-          try? await Task.sleep(for: .milliseconds(20))
-        }
-        if process.isRunning {
-          signalProcess(processID, signal: SIGKILL, processGroup: ownsProcessGroup)
-        }
-        // `Process.waitUntilExit()` can remain blocked on macOS even after the
-        // child has disappeared. A timeout must stay bounded so the collector
-        // can publish the failure and retry on its next polling interval.
-        outTask.cancel()
-        errTask.cancel()
-        if wasCancelled { throw CancellationError() }
-        throw ProcessExecutionFailure.timedOut
-      }
-      if wasCancelled {
-        outTask.cancel()
-        errTask.cancel()
-        throw CancellationError()
-      }
-      return ProcessResult(
-        stdout: await outTask.value,
-        stderr: await errTask.value,
-        exitStatus: process.terminationStatus,
-        terminationReason: process.terminationReason == .uncaughtSignal ? .uncaughtSignal : .exit
-      )
-    }
-    return try await withTaskCancellationHandler {
-      try await worker.value
-    } onCancel: {
-      worker.cancel()
-    }
-  }
-
-  #if canImport(Glibc)
-  /// Foundation's Linux spawn inherits this worker thread's blocked signals.
-  /// In particular, blocked SIGCHLD leaves a shell waiting forever for its children.
-  /// Keep mask changes on this thread with no suspension and restore them on error.
-  private static func launchWithUnblockedSignals(_ process: Process) throws {
-    var previous = sigset_t()
-    var unblocked = sigset_t()
-    sigemptyset(&unblocked)
-    guard pthread_sigmask(SIG_SETMASK, &unblocked, &previous) == 0 else {
-      throw ProcessExecutionFailure.spawnFailed
-    }
-    defer { pthread_sigmask(SIG_SETMASK, &previous, nil) }
-    try process.run()
-  }
-  #endif
-
-  private func readPipe(_ descriptor: Int32) async -> Data {
-    defer { close(descriptor) }
-    let flags = fcntl(descriptor, F_GETFL)
-    guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else { return Data() }
-    var result = Data()
-    var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
-    while !Task.isCancelled {
-      let count = buffer.withUnsafeMutableBytes { bytes in
-        read(descriptor, bytes.baseAddress, bytes.count)
-      }
-      if count > 0 {
-        result.append(contentsOf: buffer.prefix(count))
-      } else if count == 0 {
-        break
-      } else if errno == EINTR {
-        continue
-      } else if errno == EAGAIN || errno == EWOULDBLOCK {
-        try? await Task.sleep(for: .milliseconds(10))
-      } else {
-        break
-      }
-    }
-    return result
-  }
-
-  private func signalProcess(
-    _ processID: Int32,
-    signal: Int32,
-    processGroup: Bool
-  ) {
-    if processGroup {
-      _ = kill(-processID, signal)
-    }
-    _ = kill(processID, signal)
   }
 }
 
@@ -363,7 +163,10 @@ public struct LocalCCUsageCommandRunner: CCUsageSourceCommandRunner, Sendable {
   public let executable: URL
   private let processRunner: any CCUsageProcessRunning
 
-  public init(executable: URL, processRunner: any CCUsageProcessRunning = CCUsageProcessRunner()) {
+  public init(
+    executable: URL,
+    processRunner: any CCUsageProcessRunning = CCUsageProcessRunner()
+  ) {
     self.executable = executable
     self.processRunner = processRunner
   }
@@ -403,25 +206,12 @@ public struct LocalCCUsageCommandRunner: CCUsageSourceCommandRunner, Sendable {
           let environmentRunner = processRunner as? any CCUsageEnvironmentProcessRunning else {
       throw CCUsageCommandFailure(runnerKind: .local, phase: .spawnFailed)
     }
-    // ccusage scans the whole session history even for a bounded query, so a
-    // date-bounded command runs against a pruned mirror that keeps only files
-    // recent enough to hold events in range.
-    let sourceAgent = source.agent
-    let prunedRoot: URL? = if let cutoff = SessionScanPruning.mtimeCutoff(arguments: arguments) {
-      await Task.detached(priority: .utility) {
-        SessionScanPruning.prunedRoot(original: value, agent: sourceAgent, cutoff: cutoff)
-      }.value
-    } else {
-      nil
-    }
-    defer { if let prunedRoot { try? FileManager.default.removeItem(at: prunedRoot) } }
-    let sourceRoot = prunedRoot?.path ?? value
     var environment = ProcessInfo.processInfo.environment
     // ccusage hard-errors on a nonexistent agent dir, so the agent not covered
     // by this source is pointed at an empty directory with the expected
     // structure, which yields empty data instead of a CLI error.
-    environment["CODEX_HOME"] = source.agent == .codex ? sourceRoot : Self.disabledAgentRoot(.codex)
-    environment["CLAUDE_CONFIG_DIR"] = source.agent == .claude ? sourceRoot : Self.disabledAgentRoot(.claude)
+    environment["CODEX_HOME"] = source.agent == .codex ? value : Self.disabledAgentRoot(.codex)
+    environment["CLAUDE_CONFIG_DIR"] = source.agent == .claude ? value : Self.disabledAgentRoot(.claude)
     do {
       let result = try await environmentRunner.run(
         executable: executable,

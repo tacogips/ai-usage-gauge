@@ -49,6 +49,7 @@ enum UsageEventLogReader {
   static func jsonlFiles(roots: [URL], modifiedSince: Date?) -> [UsageEventLogFile] {
     let manager = FileManager.default
     let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]
+    let keySet = Set(keys)
     return roots.flatMap { root -> [UsageEventLogFile] in
       guard let enumerator = manager.enumerator(
         at: root,
@@ -57,7 +58,7 @@ enum UsageEventLogReader {
       ) else { return [] }
       return enumerator.compactMap { item in
         guard let url = item as? URL, url.pathExtension == "jsonl",
-              let values = try? url.resourceValues(forKeys: Set(keys)),
+              let values = try? url.resourceValues(forKeys: keySet),
               values.isRegularFile == true else { return nil }
         if let modifiedSince, let modified = values.contentModificationDate, modified < modifiedSince { return nil }
         // Enumerator URLs carry a base URL and compare unequal to a plain file URL of the

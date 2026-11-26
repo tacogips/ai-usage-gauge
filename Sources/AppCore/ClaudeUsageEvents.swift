@@ -55,6 +55,14 @@ public struct TimestampedUsageEvent: Equatable, Sendable {
 
   var identity: String { "\(sessionID)\u{1f}\(requestID)\u{1f}\(messageID)" }
 
+  /// Zero-allocation total ordering matching `(timestamp, identity)` for sorting.
+  static func isOrderedBefore(_ lhs: TimestampedUsageEvent, _ rhs: TimestampedUsageEvent) -> Bool {
+    if lhs.timestamp != rhs.timestamp { return lhs.timestamp < rhs.timestamp }
+    if lhs.sessionID != rhs.sessionID { return lhs.sessionID < rhs.sessionID }
+    if lhs.requestID != rhs.requestID { return lhs.requestID < rhs.requestID }
+    return lhs.messageID < rhs.messageID
+  }
+
   var relativeCostWeight: Decimal {
     if agent == "codex" {
       return Decimal(inputTokens) + Decimal(outputTokens) * 8 + Decimal(cacheReadTokens) / 10
@@ -172,15 +180,16 @@ public struct ClaudeUsageEventLoader: Sendable {
   static func decode(line: Data) -> TimestampedUsageEvent? {
     let fractional = ISO8601DateFormatter()
     fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return decode(line: line, fractional: fractional, wholeSeconds: ISO8601DateFormatter())
+    return decode(line: line, jsonDecoder: JSONDecoder(), fractional: fractional, wholeSeconds: ISO8601DateFormatter())
   }
 
   private static func decode(
     line: Data,
+    jsonDecoder: JSONDecoder,
     fractional: ISO8601DateFormatter,
     wholeSeconds: ISO8601DateFormatter
   ) -> TimestampedUsageEvent? {
-    guard let envelope = try? JSONDecoder().decode(EventEnvelope.self, from: line),
+    guard let envelope = try? jsonDecoder.decode(EventEnvelope.self, from: line),
           envelope.type == "assistant",
           envelope.message.role == "assistant",
           let timestamp = fractional.date(from: envelope.timestamp) ?? wholeSeconds.date(from: envelope.timestamp),
@@ -205,6 +214,7 @@ public struct ClaudeUsageEventLoader: Sendable {
   }
 
   private struct Decoders {
+    let jsonDecoder = JSONDecoder()
     let day: DateFormatter
     let fractional: ISO8601DateFormatter
     let wholeSeconds: ISO8601DateFormatter
@@ -217,7 +227,7 @@ public struct ClaudeUsageEventLoader: Sendable {
     }
 
     func event(from line: Data) -> (day: String, event: TimestampedUsageEvent)? {
-      guard let event = decode(line: line, fractional: fractional, wholeSeconds: wholeSeconds) else { return nil }
+      guard let event = decode(line: line, jsonDecoder: jsonDecoder, fractional: fractional, wholeSeconds: wholeSeconds) else { return nil }
       return (day.string(from: event.timestamp), event)
     }
   }
@@ -273,11 +283,11 @@ public struct ClaudeUsageEventLoader: Sendable {
         entry = try rescan(file: file, since: since, scanFloor: scanFloor, timeZoneIdentifier: timeZoneIdentifier, decoders: decoders)
       }
       entries[file.url] = entry
-      for cached in entry.events.values where cached.day >= since && (until.map { cached.day <= $0 } ?? true) {
+      for (identity, cached) in entry.events where cached.day >= since && (until.map { cached.day <= $0 } ?? true) {
         // Keep the highest-timestamp record for a given identity, matching the dedup of the
         // unbounded forward scan, so daily totals do not depend on whether `since` was supplied.
-        if let existing = latestByIdentity[cached.event.identity], existing.timestamp >= cached.event.timestamp { continue }
-        latestByIdentity[cached.event.identity] = cached.event
+        if let existing = latestByIdentity[identity], existing.timestamp >= cached.event.timestamp { continue }
+        latestByIdentity[identity] = cached.event
       }
     }
     return UsageEventScanOutcome(
@@ -331,9 +341,7 @@ public struct ClaudeUsageEventLoader: Sendable {
   }
 
   private static func sorted(_ eventsByIdentity: [String: TimestampedUsageEvent]) -> [TimestampedUsageEvent] {
-    eventsByIdentity.values.sorted {
-      ($0.timestamp, $0.identity) < ($1.timestamp, $1.identity)
-    }
+    eventsByIdentity.values.sorted(by: TimestampedUsageEvent.isOrderedBefore)
   }
 }
 

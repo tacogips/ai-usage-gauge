@@ -15,6 +15,7 @@ private struct ResolvedTokenCount {
 }
 
 private struct CodexDecoders {
+  let jsonDecoder = JSONDecoder()
   let day: DateFormatter
   let fractional: ISO8601DateFormatter
   let wholeSeconds: ISO8601DateFormatter
@@ -31,7 +32,7 @@ private struct CodexDecoders {
   }
 
   func decode(_ line: Data) -> (envelope: CodexEnvelope, timestamp: Date)? {
-    guard let envelope = try? JSONDecoder().decode(CodexEnvelope.self, from: line),
+    guard let envelope = try? jsonDecoder.decode(CodexEnvelope.self, from: line),
           let timestamp = timestamp(envelope.timestamp) else { return nil }
     return (envelope, timestamp)
   }
@@ -196,8 +197,8 @@ public struct CodexUsageEventLoader: Sendable {
         entry = try rescan(file: file, since: since, scanFloor: scanFloor, timeZoneIdentifier: timeZoneIdentifier, decoders: decoders)
       }
       entries[file.url] = entry
-      for cached in entry.events.values where cached.day >= since && (until.map { cached.day <= $0 } ?? true) {
-        if eventsByIdentity[cached.event.identity] == nil { eventsByIdentity[cached.event.identity] = cached.event }
+      for (identity, cached) in entry.events where cached.day >= since && (until.map { cached.day <= $0 } ?? true) {
+        if eventsByIdentity[identity] == nil { eventsByIdentity[identity] = cached.event }
       }
     }
     return UsageEventScanOutcome(
@@ -367,9 +368,7 @@ public struct CodexUsageEventLoader: Sendable {
   }
 
   private static func sorted(_ eventsByIdentity: [String: TimestampedUsageEvent]) -> [TimestampedUsageEvent] {
-    eventsByIdentity.values.sorted {
-      ($0.timestamp, $0.identity) < ($1.timestamp, $1.identity)
-    }
+    eventsByIdentity.values.sorted(by: TimestampedUsageEvent.isOrderedBefore)
   }
 
   fileprivate static func normalizedDirectory(_ value: String?) -> String? {

@@ -701,8 +701,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   nonisolated private static func remoteRunner(
-    connection: SSHConnection,
-    configuration: AppConfiguration
+    connection: SSHConnection, configuration: AppConfiguration
   ) throws -> RetryingCCUsageCommandRunner {
     RetryingCCUsageCommandRunner(
       runner: try SSHCCUsageCommandRunner(connection: connection),
@@ -713,8 +712,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   nonisolated private static func sourceRunner(
-    descriptor: MachineDescriptor,
-    executable: URL,
+    descriptor: MachineDescriptor, executable: URL,
     configuration: AppConfiguration
   ) throws -> MultiSourceCCUsageCommandRunner {
     let runner: any CCUsageSourceCommandRunner

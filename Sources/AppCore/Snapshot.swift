@@ -173,7 +173,7 @@ private func reconciledTimestampedSessions(
   }
   let allocatedEvents = eventsByModelDay.flatMap { key, groupedEvents -> [CCUsageSessionMetricRecord] in
     guard let authoritative = totalsByModelDay[key] else { return [] }
-    let sortedEvents = groupedEvents.sorted { ($0.timestamp, $0.identity) < ($1.timestamp, $1.identity) }
+    let sortedEvents = groupedEvents.sorted(by: TimestampedUsageEvent.isOrderedBefore)
     let totalWeight = sortedEvents.reduce(Decimal.zero) { $0 + $1.relativeCostWeight }
     let rawInputTokens = sortedEvents.reduce(0) { $0 + $1.inputTokens }
     let rawOutputTokens = sortedEvents.reduce(0) { $0 + $1.outputTokens }

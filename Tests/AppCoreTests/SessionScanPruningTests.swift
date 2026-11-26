@@ -126,7 +126,7 @@ private struct RecordingEnvironmentProcessRunner: CCUsageEnvironmentProcessRunni
     #expect(SessionScanPruning.prunedRoot(original: missing.path, agent: .codex, cutoff: Date()) == nil)
   }
 
-  @Test func localRunnerPrunesCodexHomeForBoundedQueriesAndCleansUp() async throws {
+  @Test func localRunnerUsesRealRootForBoundedQueriesWithoutCreatingHardLinkMirrors() async throws {
     let root = try makeSessionRoot(agent: .codex)
     defer { try? FileManager.default.removeItem(at: root) }
     let cutoff = try #require(SessionScanPruning.mtimeCutoff(arguments: ["daily", "--since", "2026-08-24"]))
@@ -164,11 +164,7 @@ private struct RecordingEnvironmentProcessRunner: CCUsageEnvironmentProcessRunni
     )
 
     let environment = try #require(await recorder.environments.first)
-    let codexHome = try #require(environment["CODEX_HOME"])
-    #expect(codexHome != root.path)
-    #expect(await recorder.codexSessionListings.first == ["rollout-recent.jsonl"])
-    // The pruned mirror is temporary and removed after the command finishes.
-    #expect(!FileManager.default.fileExists(atPath: codexHome))
+    #expect(environment["CODEX_HOME"] == root.path)
   }
 
   @Test func localRunnerKeepsRealRootForUnboundedQueries() async throws {
@@ -218,5 +214,25 @@ private struct RecordingEnvironmentProcessRunner: CCUsageEnvironmentProcessRunni
     let unbounded = try runner.sourceSSHArguments(ccusageArguments: ["daily", "--json"], source: source)
     #expect(unbounded.contains("''"))
     #expect(!unbounded.contains("'202608220000'"))
+  }
+
+  @Test func cutoffUsesTightTimezoneAwareBufferWhenTimezoneProvided() {
+    let dailyCutoff = SessionScanPruning.mtimeCutoff(
+      arguments: ["daily", "--json", "--since", "2026-08-24", "--until", "2026-08-24", "--timezone", "Asia/Tokyo"]
+    )
+    // 2026-08-24T00:00:00+09:00 = 2026-08-23T15:00:00Z, minus 1h buffer = 2026-08-23T14:00:00Z.
+    #expect(dailyCutoff == Date(timeIntervalSince1970: 1_787_529_600 - 9 * 3_600 - 3_600))
+
+    let blocksCutoff = SessionScanPruning.mtimeCutoff(
+      arguments: ["blocks", "--json", "--since", "2026-08-24", "--until", "2026-08-24", "--timezone", "Asia/Tokyo"]
+    )
+    // 2026-08-24T00:00:00+09:00 minus 6h buffer = 2026-08-23T09:00:00Z.
+    #expect(blocksCutoff == Date(timeIntervalSince1970: 1_787_529_600 - 9 * 3_600 - 6 * 3_600))
+
+    // Remote touch token always keeps the 48h UTC buffer regardless of --timezone.
+    let token = SessionScanPruning.mtimeCutoffToken(
+      arguments: ["daily", "--since", "2026-08-24", "--timezone", "Asia/Tokyo"]
+    )
+    #expect(token == "202608220000")
   }
 }
