@@ -1,0 +1,486 @@
+{
+  "taskId": "rust-tauri-migration-20261126",
+  "workflowMode": "issue-resolution",
+  "implementationBranch": "main",
+  "baseBranch": "main",
+  "remote": "origin",
+  "originalHead": "f3729de3b205a03f11a77d5b6acefeee6518b6b3",
+  "designDocPaths": [
+    "design-docs/specs/design-rust-tauri-migration.md",
+    "design-docs/specs/architecture.md",
+    "design-docs/specs/command.md",
+    "design-docs/specs/client-commands.md",
+    "design-docs/specs/design-remote-machine-collection.md",
+    "design-docs/specs/design-machine-session-source-directories.md",
+    "design-docs/specs/design-subscription-rate-limits.md",
+    "design-docs/specs/design-dashboard-dark-flat-effort-grouping.md"
+  ],
+  "evidenceRoot": "tmp/rust-tauri-migration-20261126",
+  "reviewContext": {
+    "issueReference": "tacogips/ccusage-gauge (inline workflow input; no issue number supplied; workflowExecutionId gemini-neon-terra-design-and-implement-review-loop-session-958)",
+    "userProblem": "The Swift menubar + Swift AppCore + Tauri v2 dashboard split requires both Swift and Rust toolchains and invokes external ccusage CLI subprocesses on multi-GB local session logs every 20 seconds. Migrate the entire application to pure Rust + Tauri v2 with zero Swift code, native Tauri v2 macOS template tray icon/title/live menu, and an incremental Rust JSONL usage/pricing/blocks engine.",
+    "requiredOutcomes": [
+      "Single root Cargo workspace (crates/ccusage-core, crates/ccusage-cli, src-tauri) with one locked Cargo.lock and zero Swift code or SwiftPM files remaining.",
+      "Single-process Tauri v2 macOS menu-bar tray + embedded SolidJS dashboard (ccusage-gauge-app) rendering RGBA template tray icons via TrayIcon::set_icon_with_as_template (area-proportional fill logos for Claude, Codex, and Gemini, budget pie/warning icon, inline ratio percentages, anti-flicker change detection), cost title via TrayIcon::set_title, live dropdown menu updates via MenuItem::set_text, native settings/dialogs, and macOS Launch at Login via pure-Rust objc2 SMAppService FFI.",
+      "Native Rust incremental byte-offset JSONL scanner for Claude Code (~/.claude/projects), Codex (~/.codex/sessions), and Antigravity (~/.gemini/antigravity-cli) tracking (fileSize, modified, scannedThrough, boundary) with reuse/resume/rescan and zero local ccusage CLI invocations or hard-link mirroring.",
+      "Exact decimal Rust USD pricing engine using daily-refreshed cached LiteLLM pricing JSON (~/.cache/ccusage-gauge/litellm-pricing.json) plus built-in fallback table, 5m/1h cache-creation rates, above-200k tiers, and Antigravity date-effective schedules.",
+      "Local 5-hour billing blocks (regenerative BlockAnchor reconstruction + cold/warm parity), daily metrics, 15-minute session buckets, and exact half-open [start, end) rolling-window totals backed by compatible SQLite UsageAggregationCache (preserving legacy Swift-era caches and cached-only history).",
+      "Full parity for rate-limit fetchers (Claude Keychain/credentials, Codex auth/JSONL fallback, Gemini agy PTY), remote SSH ccusage collection and machine registry v3, MachineDashboardRouter (/api/* routes, Tauri IPC dashboard_request, loopback HTTP server), ccusage-gauge CLI subcommands and exit codes, bootstrap JSONL logging, and on-disk compatibility under ~/.config/ccusage-gauge, ~/.local/ccusage-gauge, and ~/.cache/ccusage-gauge.",
+      "Updated mise.toml, smoke/Homebrew Formula & Cask packaging scripts, Linux amd64 CI workflow, Docker emulation collector image, and repository documentation (AGENTS.md, README.md, llms.txt, packaging/homebrew/README.md) with frontend/ preserved intact."
+    ],
+    "nonGoals": [
+      "Do not modify the SolidJS frontend/ source code or its /api/* and dashboard_request IPC wire contracts.",
+      "Do not replace remote SSH machine collection's remote ccusage CLI invocation over SSH.",
+      "Do not implement OAuth token refresh for Claude or Codex rate limits.",
+      "Do not commit .riela/, tmp/, or Cargo target/ build artifacts; workers must not run git commit/push/branch/reset operations."
+    ],
+    "constraints": [
+      "Preserve exact on-disk paths, 0700/0600 permissions, camelCase JSON schemas, SQLite schemas, and CCUSAGE_GAUGE_{HOME,CONFIG_HOME,STATE_HOME,CACHE_HOME} precedence (always appending ccusage-gauge/ under each *_HOME override).",
+      "Keep all Rust source files under 1000 lines, rustfmt clean, and cargo clippy --locked --workspace --all-targets -- -D warnings clean.",
+      "Pin all workspace dependencies in Wave 1 (rust-01-workspace-foundation) so subsequent waves run with --locked without mutating Cargo.lock.",
+      "Keep crates/ccusage-cli free of Tauri, AppKit, and WebKit linkage so headless Linux amd64 builds and Docker emulation containers remain lightweight.",
+      "Preserve AGENTS.md response rules, no-emoji rule, and git commit policy (no AI tool attribution or co-authorship in commit messages)."
+    ],
+    "designDecisionsAndRationale": [
+      {
+        "decision": "Single root Cargo workspace with three crates (crates/ccusage-core, crates/ccusage-cli, src-tauri) and one root Cargo.lock.",
+        "rationale": "Eliminates duplicate dependency resolution, enables parallel Wave 2 development without Cargo.lock contention, and keeps ccusage-cli headless for Linux amd64 and Docker builds."
+      },
+      {
+        "decision": "Single-process Tauri v2 tray + dashboard app (ccusage-gauge-app) replacing the Swift-to-Tauri stdin/stdout pipe bridge and nested CCUsageGaugeDashboard.app helper.",
+        "rationale": "Removes IPC serialization/process-management overhead and simplifies both Homebrew Formula and signed/notarized Cask packaging while preserving dashboardAutostart and --dashboard-only CLI launch semantics."
+      },
+      {
+        "decision": "Separate 15-minute chart bucketing from exact half-open [interval.start, interval.end) rolling-window totals with a pinned single-day active-boundary scan slot for long customHours(n) windows.",
+        "rationale": "Prevents 15-minute flooring from dropping in-window events or including expired events while keeping steady-state 20-second polls append-only / zero-reread even for multi-week rolling windows."
+      },
+      {
+        "decision": "Regenerative BlockAnchor checkpoint at retention_floor for 5-hour billing blocks.",
+        "rationale": "Guarantees cold-cache, warm-cache, restart, narrow, and expanded queries produce identical 5-hour block starts and costs without re-scanning unchanged historical logs on steady-state polls."
+      },
+      {
+        "decision": "Additive local-only antigravity_coverage_ranges table and strict token-total conservation for legacy Swift-era UsageAggregationCache provenance backfill.",
+        "rationale": "Preserves cached-only Claude/Codex history whose raw logs may be gone, backfills historical Antigravity rows idempotently, and prevents partial-log rescans from undercounting or duplicating legacy totals."
+      },
+      {
+        "decision": "Internal Tauri custom-URI dialogs (ccusage-dialog://localhost/...) for tray budget, custom hours, refresh interval, and display settings.",
+        "rationale": "Provides native tray configuration UX in pure Rust + Tauri v2 without modifying frontend/."
+      }
+    ],
+    "intentionalTradeoffs": [
+      "GUI WindowServer launch checks (dashboardAutostart true/false and ccusage-gauge dashboard --dashboard-only window close) are manual/environment-gated when running in headless sandboxes, backed by automated CLI, IPC, and tray-state unit tests.",
+      "Crate-wide and workspace-wide cargo clippy gates run in serial join waves (rust-09, rust-10, rust-13, rust-14) rather than parallel Wave 2/Wave 5 leaves to avoid sibling-module lint interference."
+    ],
+    "supportedEdgeCases": [
+      "Truncated, replaced, or in-place-edited JSONL files trigger boundary mismatch detection and clean rescan; appended-only logs resume from scannedThrough with zero historical prefix reads.",
+      "Codex bounded reverse scan resolves pre-cutoff turn_context lines for in-range token_count events while preserving newest_model/newest_effort for subsequent forward append-resume.",
+      "Offline or first-run pricing falls back cleanly from daily LiteLLM cache to built-in model rates and $0 for unknown models while retaining token counts.",
+      "Legacy Swift-era aggregates-local.sqlite3 with partial or absent raw logs preserves authoritative cached daily/session totals without duplication or unsupported directory attribution.",
+      "CCUSAGE_GAUGE_DESKTOP_EXECUTABLE set (even to empty or missing path) fails closed with exit 1 and sanitized diagnostic without falling back to sibling binary lookup.",
+      "Disabling all local session sources produces an empty healthy snapshot; missing or non-directory local roots are skipped without error."
+    ],
+    "outOfScopeEdgeCases": [
+      "Windows native tray or Windows Launch at Login support.",
+      "Replacing remote SSH ccusage CLI execution with remote JSONL streaming.",
+      "Changing SolidJS dashboard UI layout, styling, or chart specifications."
+    ],
+    "sourcePaths": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/ccusage-core",
+      "crates/ccusage-cli",
+      "src-tauri",
+      "frontend",
+      "mise.toml",
+      "Resources/MenuBarInfo.plist",
+      "scripts",
+      ".github/workflows/linux-amd64-build.yml",
+      "deploy/emulation/Dockerfile.collector",
+      "AGENTS.md",
+      "README.md",
+      "llms.txt",
+      "packaging/homebrew/README.md"
+    ]
+  },
+  "plans": [
+    {
+      "planId": "rust-01-workspace-foundation",
+      "planPath": "impl-plans/active/rust-01-workspace-foundation.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        ".gitignore",
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/ccusage-core/Cargo.toml",
+        "crates/ccusage-core/src/lib.rs",
+        "crates/ccusage-core/src/version.rs",
+        "crates/ccusage-core/src/paths.rs",
+        "crates/ccusage-core/src/types.rs",
+        "crates/ccusage-core/src/config/mod.rs",
+        "crates/ccusage-core/src/state/mod.rs",
+        "crates/ccusage-core/src/scanner/mod.rs",
+        "crates/ccusage-core/src/pricing/mod.rs",
+        "crates/ccusage-core/src/cache/mod.rs",
+        "crates/ccusage-core/src/aggregation/mod.rs",
+        "crates/ccusage-core/src/rate_limits/mod.rs",
+        "crates/ccusage-core/src/remote/mod.rs",
+        "crates/ccusage-core/src/dashboard/mod.rs",
+        "crates/ccusage-cli/Cargo.toml",
+        "crates/ccusage-cli/src/main.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/tray_icons.rs",
+        "crates/ccusage-core/tests/paths_types_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "Root Cargo.toml and Cargo.lock exist, src-tauri/Cargo.lock is removed, /target/ is in .gitignore, and cargo check --workspace exits 0.",
+        "cargo test --locked -p ccusage-core --test paths_types_tests exits 0 with all AppPaths env-override and Swift/frontend wire-parity serialization tests passing.",
+        "No Swift files or frontend/ tracked files were modified."
+      ],
+      "verification": [
+        "cargo check --workspace",
+        "cargo test --locked -p ccusage-core --test paths_types_tests"
+      ]
+    },
+    {
+      "planId": "rust-02-config-state-logging",
+      "planPath": "impl-plans/active/rust-02-config-state-logging.md",
+      "wave": 2,
+      "dependsOn": [
+        "rust-01-workspace-foundation"
+      ],
+      "writePaths": [
+        "crates/ccusage-core/src/config",
+        "crates/ccusage-core/src/state",
+        "crates/ccusage-core/tests/config_state_logging_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-core --test config_state_logging_tests exit 0.",
+        "All config, state, reset-window, pie-selection, and bootstrap-logger tests pass with exact JSON and permission compatibility.",
+        "All files in writePaths stay under 1000 lines."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-core/src/config/*.rs crates/ccusage-core/src/state/*.rs crates/ccusage-core/tests/config_state_logging_tests.rs",
+        "cargo test --locked -p ccusage-core --test config_state_logging_tests"
+      ]
+    },
+    {
+      "planId": "rust-03-incremental-scanner",
+      "planPath": "impl-plans/active/rust-03-incremental-scanner.md",
+      "wave": 2,
+      "dependsOn": [
+        "rust-01-workspace-foundation"
+      ],
+      "writePaths": [
+        "crates/ccusage-core/src/scanner",
+        "crates/ccusage-core/tests/scanner_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-core --test scanner_tests exit 0.",
+        "All incremental byte-offset reuse/resume/rescan, boundary check, Claude/Codex/Antigravity parsing, Codex bounded reverse-scan + append-resume parity, and directory/effort attribution tests pass deterministically."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-core/src/scanner/*.rs crates/ccusage-core/tests/scanner_tests.rs",
+        "cargo test --locked -p ccusage-core --test scanner_tests"
+      ]
+    },
+    {
+      "planId": "rust-04-pricing-engine",
+      "planPath": "impl-plans/active/rust-04-pricing-engine.md",
+      "wave": 2,
+      "dependsOn": [
+        "rust-01-workspace-foundation"
+      ],
+      "writePaths": [
+        "crates/ccusage-core/src/pricing",
+        "crates/ccusage-core/tests/pricing_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-core --test pricing_tests exit 0.",
+        "All LiteLLM cache refresh, offline fallback, built-in table, 5m/1h cache-creation, above-200k tiered pricing, and Antigravity date-effective pricing tests pass with zero network access."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-core/src/pricing/*.rs crates/ccusage-core/tests/pricing_tests.rs",
+        "cargo test --locked -p ccusage-core --test pricing_tests"
+      ]
+    },
+    {
+      "planId": "rust-05-sqlite-stores",
+      "planPath": "impl-plans/active/rust-05-sqlite-stores.md",
+      "wave": 2,
+      "dependsOn": [
+        "rust-01-workspace-foundation"
+      ],
+      "writePaths": [
+        "crates/ccusage-core/src/cache",
+        "crates/ccusage-core/tests/sqlite_stores_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-core --test sqlite_stores_tests exit 0.",
+        "All SQLite UsageAggregationCache, DashboardStateStore, DashboardDirectoryNameStore, legacy Swift-cache compatibility/backfill, rollback/retry, and directory-name lifecycle tests pass."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-core/src/cache/*.rs crates/ccusage-core/tests/sqlite_stores_tests.rs",
+        "cargo test --locked -p ccusage-core --test sqlite_stores_tests"
+      ]
+    },
+    {
+      "planId": "rust-06-rate-limits",
+      "planPath": "impl-plans/active/rust-06-rate-limits.md",
+      "wave": 2,
+      "dependsOn": [
+        "rust-01-workspace-foundation"
+      ],
+      "writePaths": [
+        "crates/ccusage-core/src/rate_limits",
+        "crates/ccusage-core/tests/rate_limits_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-core --test rate_limits_tests exit 0.",
+        "All Claude, Codex, and Gemini (agy PTY) rate-limit fetcher, redaction, throttling, coalescing, and display-formatting tests pass."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-core/src/rate_limits/*.rs crates/ccusage-core/tests/rate_limits_tests.rs",
+        "cargo test --locked -p ccusage-core --test rate_limits_tests"
+      ]
+    },
+    {
+      "planId": "rust-07-remote-ssh-registry",
+      "planPath": "impl-plans/active/rust-07-remote-ssh-registry.md",
+      "wave": 2,
+      "dependsOn": [
+        "rust-01-workspace-foundation"
+      ],
+      "writePaths": [
+        "crates/ccusage-core/src/remote",
+        "crates/ccusage-core/tests/remote_ssh_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-core --test remote_ssh_tests exit 0.",
+        "All machine registry v1-v3 migration, source-plan resolution, mutation-owner serialization/rollback, SSH argv/diagnostic classification, and remote ccusage decoder tests pass."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-core/src/remote/*.rs crates/ccusage-core/tests/remote_ssh_tests.rs",
+        "cargo test --locked -p ccusage-core --test remote_ssh_tests"
+      ]
+    },
+    {
+      "planId": "rust-08-tray-icon-renderer",
+      "planPath": "impl-plans/active/rust-08-tray-icon-renderer.md",
+      "wave": 2,
+      "dependsOn": [
+        "rust-01-workspace-foundation"
+      ],
+      "writePaths": [
+        "src-tauri/assets",
+        "src-tauri/src/tray_icons.rs",
+        "src-tauri/tests/tray_icons_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-gauge-app --test tray_icons_tests exit 0.",
+        "All RGBA template rasterization, area-proportional fill geometry, budget pie/warning triangle, inline ratio-label, and anti-flicker dedup tests pass."
+      ],
+      "verification": [
+        "rustfmt --check src-tauri/src/tray_icons.rs src-tauri/tests/tray_icons_tests.rs",
+        "cargo test --locked -p ccusage-gauge-app --test tray_icons_tests"
+      ]
+    },
+    {
+      "planId": "rust-09-local-aggregation-snapshot",
+      "planPath": "impl-plans/active/rust-09-local-aggregation-snapshot.md",
+      "wave": 3,
+      "dependsOn": [
+        "rust-02-config-state-logging",
+        "rust-03-incremental-scanner",
+        "rust-04-pricing-engine",
+        "rust-05-sqlite-stores",
+        "rust-07-remote-ssh-registry"
+      ],
+      "writePaths": [
+        "crates/ccusage-core/src/aggregation",
+        "crates/ccusage-core/tests/aggregation_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check, cargo test --locked -p ccusage-core --test aggregation_tests, and cargo clippy --locked -p ccusage-core --all-targets -- -D warnings exit 0.",
+        "All 5-hour billing block BlockAnchor/cold-warm parity, exact rolling-window, long customHours(240) active-boundary slot, legacy provenance backfill, and multi-machine snapshot collector fixtures pass deterministically."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-core/src/aggregation/*.rs crates/ccusage-core/tests/aggregation_tests.rs",
+        "cargo test --locked -p ccusage-core --test aggregation_tests",
+        "cargo clippy --locked -p ccusage-core --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "planId": "rust-10-dashboard-router-http",
+      "planPath": "impl-plans/active/rust-10-dashboard-router-http.md",
+      "wave": 4,
+      "dependsOn": [
+        "rust-06-rate-limits",
+        "rust-09-local-aggregation-snapshot"
+      ],
+      "writePaths": [
+        "crates/ccusage-core/src/dashboard",
+        "crates/ccusage-core/tests/dashboard_router_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check, cargo test --locked -p ccusage-core --test dashboard_router_tests, and cargo clippy --locked -p ccusage-core --all-targets -- -D warnings exit 0.",
+        "All /api/* router, query, loopback security-gate, HTTP server/client, StaticAssetResolver, and desktop-executable resolution tests pass."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-core/src/dashboard/*.rs crates/ccusage-core/tests/dashboard_router_tests.rs",
+        "cargo test --locked -p ccusage-core --test dashboard_router_tests",
+        "cargo clippy --locked -p ccusage-core --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "planId": "rust-11-cli-binary",
+      "planPath": "impl-plans/active/rust-11-cli-binary.md",
+      "wave": 5,
+      "dependsOn": [
+        "rust-10-dashboard-router-http"
+      ],
+      "writePaths": [
+        "crates/ccusage-cli/src",
+        "crates/ccusage-cli/tests/cli_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-cli --test cli_tests exit 0.",
+        "All CLI subcommand, exit-code (0..5), CCUSAGE_GAUGE_DESKTOP_EXECUTABLE override, and usage-snapshot parity tests pass."
+      ],
+      "verification": [
+        "rustfmt --check crates/ccusage-cli/src/*.rs crates/ccusage-cli/tests/cli_tests.rs",
+        "cargo test --locked -p ccusage-cli --test cli_tests"
+      ]
+    },
+    {
+      "planId": "rust-12-tauri-tray-app",
+      "planPath": "impl-plans/active/rust-12-tauri-tray-app.md",
+      "wave": 5,
+      "dependsOn": [
+        "rust-08-tray-icon-renderer",
+        "rust-10-dashboard-router-http"
+      ],
+      "writePaths": [
+        "src-tauri/tauri.conf.json",
+        "src-tauri/build.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/main.rs",
+        "src-tauri/src/bridge.rs",
+        "src-tauri/src/ipc.rs",
+        "src-tauri/src/tray_menu.rs",
+        "src-tauri/src/dialogs.rs",
+        "src-tauri/src/launch_at_login.rs",
+        "src-tauri/tests/ipc_and_menu_tests.rs"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rustfmt --check and cargo test --locked -p ccusage-gauge-app --test ipc_and_menu_tests exit 0.",
+        "src-tauri/src/bridge.rs is removed and all in-process dashboard_request IPC, native tray menu/title/tooltip, internal dialog validation, dashboardAutostart/--dashboard-only lifecycle, and macOS Launch at Login tests pass."
+      ],
+      "verification": [
+        "rustfmt --check src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/ipc.rs src-tauri/src/tray_menu.rs src-tauri/src/dialogs.rs src-tauri/src/launch_at_login.rs src-tauri/tests/ipc_and_menu_tests.rs",
+        "cargo test --locked -p ccusage-gauge-app --test ipc_and_menu_tests"
+      ]
+    },
+    {
+      "planId": "rust-13-tooling-scripts-packaging",
+      "planPath": "impl-plans/active/rust-13-tooling-scripts-packaging.md",
+      "wave": 6,
+      "dependsOn": [
+        "rust-11-cli-binary",
+        "rust-12-tauri-tray-app"
+      ],
+      "writePaths": [
+        "mise.toml",
+        "Resources/MenuBarInfo.plist",
+        "Resources/DashboardInfo.plist",
+        "scripts",
+        ".github/workflows/linux-amd64-build.yml",
+        "deploy/emulation/Dockerfile.collector"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "All verification commands exit 0, including bash -n scripts/*.sh, workspace clippy/build, smoke checks (isolated runtime, dashboard, packaged assets formula/cask/all + missing diagnostics), and Homebrew Formula/Cask --dry-run.",
+        "The 4 Swift-only scripts and Resources/DashboardInfo.plist are removed.",
+        "No script references swift, swiftlint, .build/, Sources/AppCore/Version.swift, Sources/AppCore/Resources/Web, or CCUsageGaugeDashboard.app."
+      ],
+      "verification": [
+        "bash -n scripts/*.sh",
+        "cargo clippy --locked --workspace --all-targets -- -D warnings",
+        "cargo build --locked --workspace",
+        "scripts/smoke-isolated-runtime.sh",
+        "scripts/smoke-dashboard.sh --port 18181 --assets frontend/dist",
+        "scripts/smoke-packaged-assets.sh --layout all",
+        "scripts/smoke-packaged-assets.sh --layout all --expect-missing-diagnostics",
+        "scripts/build-homebrew-release.sh --dry-run",
+        "scripts/build-homebrew-cask-release.sh --dry-run"
+      ]
+    },
+    {
+      "planId": "rust-14-swift-removal-and-docs",
+      "planPath": "impl-plans/active/rust-14-swift-removal-and-docs.md",
+      "wave": 7,
+      "dependsOn": [
+        "rust-13-tooling-scripts-packaging"
+      ],
+      "writePaths": [
+        "Package.swift",
+        "Package.resolved",
+        ".swiftlint.yml",
+        "Sources",
+        "Tests",
+        "AGENTS.md",
+        "README.md",
+        "llms.txt",
+        "packaging/homebrew/README.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "All automated verification commands exit 0 (workspace test/clippy/build/release, frontend check/test/build, smoke scripts, and Homebrew Formula/Cask dry-runs).",
+        "Zero .swift files or SwiftPM files (Package.swift, Package.resolved, .swiftlint.yml, Sources/, Tests/) remain in the repository.",
+        "AGENTS.md, README.md, llms.txt, and packaging/homebrew/README.md accurately document the pure Rust + Tauri v2 workspace while preserving AGENTS.md response and git commit rules."
+      ],
+      "verification": [
+        "test -z \"$(find . -not -path './.git/*' -not -path './target/*' -not -path './src-tauri/target/*' -not -path './frontend/node_modules/*' -name '*.swift')\"",
+        "cargo test --locked --workspace",
+        "cargo clippy --locked --workspace --all-targets -- -D warnings",
+        "cargo build --locked --workspace",
+        "cargo build --locked --release -p ccusage-cli -p ccusage-gauge-app",
+        "(cd frontend && bun run check && bun test && bun run build)",
+        "scripts/smoke-isolated-runtime.sh",
+        "scripts/smoke-dashboard.sh --port 18181 --assets frontend/dist",
+        "scripts/smoke-packaged-assets.sh --layout all",
+        "scripts/smoke-packaged-assets.sh --layout all --expect-missing-diagnostics",
+        "scripts/build-homebrew-release.sh --dry-run",
+        "scripts/build-homebrew-cask-release.sh --dry-run"
+      ]
+    }
+  ]
+}

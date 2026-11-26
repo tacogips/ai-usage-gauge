@@ -2,69 +2,82 @@
 
 ## Status
 
-Proposed for implementation through milestones M0-M5.
+Updated for the pure Rust + Tauri v2 architecture (see `design-docs/specs/design-rust-tauri-migration.md` for full migration details).
 
 ## Product Boundary
 
-`ccusage-gauge` is a macOS 14 or newer menu-bar application backed by testable
-Swift domain services. It periodically invokes the installed `ccusage` CLI,
-shows cost since the active reset boundary, and optionally serves a dashboard
-from `127.0.0.1`.
+`ccusage-gauge` is a macOS 14 or newer menu-bar and desktop dashboard application
+implemented in pure Rust and Tauri v2, paired with a cross-platform headless
+CLI and loopback HTTP server (`127.0.0.1`).
 
-`ccusage` v20.0.17-compatible aggregate JSON remains the authoritative usage
-source. Host-local Codex and Claude JSONL event readers supply timestamped
-session detail for reconciliation across each materialized dashboard range, but
-do not replace aggregate costs or tokens. Per-machine source-root selection follows
+Local usage collection natively scans Claude Code, Codex, and Antigravity JSONL
+logs incrementally by byte offset, computes exact decimal USD costs using cached
+LiteLLM pricing (with daily refresh and built-in fallback), and derives 5-hour
+billing blocks, daily metrics, and 15-minute session buckets with project
+directory and reasoning-effort attribution locally in Rust without invoking a
+local `ccusage` CLI subprocess or hard-link mirroring. Remote SSH machines
+continue to invoke remote `ccusage` v20.0.17+ over SSH as their aggregate usage
+source. Per-machine source-root selection follows
 `design-machine-session-source-directories.md`. Static configuration and
 mutable user state have separate ownership and storage locations.
-Subscription rate limits for the local Claude Code and Codex accounts are a
-separate, cost-independent data source defined in
-`design-subscription-rate-limits.md`.
+Subscription rate limits for the local Claude Code, Codex, and Gemini (`agy`)
+accounts are a separate, cost-independent data source defined in
+`design-subscription-rate-limits.md` and `design-rust-tauri-migration.md`.
 
 ## Target Boundaries
 
-- `AppCore` owns configuration, state persistence, reset-window calculations,
-  tolerant decoding of `ccusage --json` responses, aggregation, asynchronous
-  process execution, dashboard query services, and the localhost HTTP service.
-- `AppCLI` exposes help/version and headless smoke or diagnostic operations. It
-  must use `AppCore` rather than reproduce domain behavior.
-- The menu-bar executable owns `NSStatusItem`, AppKit menus and dialogs,
-  application lifecycle, opening the browser, and main-actor presentation.
-- `AppCoreTests` verifies headless behavior with injected paths, clocks,
-  calendars, process runners, and fixtures.
-- `frontend/` owns the bun-built SolidJS SPA and a CSS framework. Its compiled
-  files are immutable resources served by the Swift HTTP service.
+- `crates/ccusage-core` owns configuration, state persistence, reset-window
+  calculations, incremental local JSONL usage scanning, USD pricing, 5-hour
+  block / daily / 15-minute session aggregation, SQLite caches and dashboard
+  state stores, tolerant decoding of remote SSH `ccusage --json` responses,
+  remote machine registry and collection, subscription rate-limit services,
+  dashboard query services, the shared `MachineDashboardRouter`, the loopback
+  HTTP server, and the loopback HTTP API client.
+- `crates/ccusage-cli` (`ccusage-gauge`) exposes help/version, local diagnostic
+  commands, the foreground loopback `serve` host, `dashboard` launcher, and
+  typed `client` commands. It delegates all domain rules to `ccusage-core` and
+  carries no GUI or WebKit dependency so headless Linux builds remain supported.
+- `src-tauri` (`ccusage-gauge-app`) is a single-process Tauri v2 desktop app
+  owning the macOS menu-bar tray icon (RGBA template rasterization, title,
+  tooltip, live native menu, internal settings dialogs, and pure-Rust
+  `SMAppService` Launch at Login) and the embedded SolidJS `"main"` dashboard
+  window backed directly in-process via `dashboard_request` IPC.
+- `frontend/` owns the bun-built SolidJS SPA. Its compiled `frontend/dist`
+  assets are embedded in `ccusage-gauge-app` by Tauri and served from disk by
+  `ccusage-gauge serve`.
 
-SwiftPM target boundaries remain the default extension points. A new module is
-justified only when one of these responsibilities cannot remain independently
-testable inside the listed targets. Every Swift source file stays below 1000
-lines.
+Cargo workspace crate boundaries (`ccusage-core`, `ccusage-cli`, `src-tauri`)
+remain the default extension points.
 
 ## Runtime Data Flow
 
-1. Startup resolves the configuration path and creates the default file only
-   when it does not exist.
+1. Startup activates the persistent bootstrap logger, resolves the configuration
+   path, and creates the default file only when it does not exist.
 2. The application loads mutable state separately, using defaults if no state
    file exists.
-3. Executable resolution checks an explicit configured `ccusagePath` first; if
-   it is absent, resolution searches `PATH`. A configured but invalid path is a
-   validation failure and is not silently replaced by another executable.
-4. A background polling service invokes `ccusage blocks --json` and/or
-   `ccusage daily --json`. Process launch, pipe reads, decoding, and aggregation
-   do not execute on the main actor.
-5. `AppCore` converts decoded records into model-summed cost points and applies
-   the active reset window. A successful snapshot is delivered to the menu-bar
-   presenter and retained for dashboard queries.
-6. The presenter updates status and menu content on the main actor. A failed
-   poll preserves the last successful snapshot while exposing a stale/error
-   state; missing `ccusage` exposes installation or path guidance without
-   terminating the app.
-7. When enabled, the Swift HTTP service answers API queries from the same domain
-   services and serves the compiled SPA. It never becomes an independent usage
-   data source.
+3. For the `local` machine, background polling scans configured Claude Code,
+   Codex, and Antigravity roots incrementally by byte offset (reading only
+   newly appended bytes on steady-state polls), prices events with the Rust
+   pricing engine, derives 5-hour billing blocks, daily metrics, and 15-minute
+   session buckets, and persists completed historical days in SQLite
+   `UsageAggregationCache`. No local `ccusage` CLI binary is required.
+4. For enabled remote SSH machines, per-machine background pollers invoke
+   remote `ccusage` (`blocks`, `daily`, `session`) over SSH using the fixed
+   adapter and store completed historical days in per-machine SQLite caches.
+5. `ccusage-core` applies the active reset window and delivers snapshots to the
+   in-process tray presenter and `MachineDashboardRouter`.
+6. The Tauri tray presenter updates its RGBA template icon, status title,
+   tooltip, and live menu items only when rendered inputs change, avoiding
+   flicker. Failed polls preserve the last successful snapshot while exposing a
+   stale/warning state without terminating the app.
+7. In `ccusage-gauge-app`, the dashboard window invokes `dashboard_request` IPC
+   directly against the in-process `MachineDashboardRouter` with no TCP socket.
+   In `ccusage-gauge serve`, the loopback HTTP service answers API queries from
+   the same router and serves the compiled SPA.
 
-Polling is single-flight: a timer tick does not start a second `ccusage` process
-while one is active. Shutdown cancels polling and stops the HTTP listener.
+Polling is single-flight per machine: a timer tick does not start a second
+collection pass while one is active. Shutdown cancels polling and stops the
+HTTP listener or desktop runtime cleanly.
 
 ## Configuration and Mutable State
 
@@ -81,12 +94,16 @@ it.
 The version-one generated configuration is normative and contains these exact
 defaults:
 
-- `ccusagePath`: `null`; a non-null value must be an absolute executable path,
-  while `null` means search `PATH`.
+- `ccusagePath`: `null`; preserved for backward compatibility with existing
+  configs. When non-null it must be an absolute path starting with `/`, and it
+  is unused for local collection (which uses the native Rust JSONL scanner).
 - `defaultResetTerm`: `daily`; this is the initial cycle used only when mutable
   state has no selected cycle.
 - `dashboardPort`: loopback port, default `18081`.
-- `dashboardAutostart`: `true`; whether to start the service during app startup.
+- `dashboardAutostart`: `true`; whether tray mode (`ccusage-gauge-app`) opens
+  the in-process Tauri dashboard window automatically at startup (`true`) or
+  keeps it closed until requested from the tray menu (`false`). Neither mode
+  binds a TCP listener.
 - `pollIntervalSeconds`: `20`; polling cadence in whole seconds.
 - `cacheRetentionDays`: `365`; aggregate-cache lifetime in days from creation.
 
@@ -103,10 +120,14 @@ Accordingly, a newly created file is equivalent to:
 }
 ```
 
-Validation requires an executable `ccusage`, a port in `1...65535`, a positive
-poll interval, a positive cache-retention day count, and a supported default
-reset term. Decode and validation errors are reported with the config path and
-do not mutate the file.
+Validation requires a port in `1...65535`, a positive poll interval, a positive
+cache-retention day count, valid remote retry/timeout bounds, valid `#RRGGBB`
+chart colors, a supported default reset term, and (when `ccusagePath` is
+non-null) an absolute path starting with `/`. Because local usage collection
+uses the native Rust JSONL scanner, `ccusagePath` is preserved for backward
+compatibility with existing configuration files and is not required to resolve
+to an installed local executable. Decode and validation errors are reported
+with the config path and do not mutate the file.
 
 ### Aggregate cache
 
@@ -117,14 +138,54 @@ root set by `CCUSAGE_GAUGE_CACHE_HOME`. The synthetic local source uses
 The cache stores completed historical daily and session aggregates. Snapshot
 loading checks expiry on every regular polling pass, using `createdAt` and
 `cacheRetentionDays`. An expired or corrupt cache is removed and rebuilt once.
-With a valid cache, only dates after `cachedThrough` through the current local
-day are requested from `ccusage`; block, daily, and session commands execute in
-parallel, and the results are merged with cached history.
 
-The cache uses the macOS system SQLite library with separate metadata, daily
-metric, and session metric tables. Decimal costs are stored as text to preserve
-exact values, writes use a transaction, and the legacy JSON cache is removed
-when the SQLite store initializes.
+For remote SSH machines, cache semantics remain unchanged: with a valid cache,
+only uncached historical ranges and the current local day are requested from
+remote `ccusage` (`blocks`, `daily`, and `session` in parallel), and results are
+merged with cached history under the existing `sourceConfigurationFingerprint`
+and `sourceGeneration` fence.
+
+For the `local` machine, native Rust collection reads Claude Code, Codex, and
+Antigravity JSONL logs directly and preserves compatible Swift-era SQLite caches
+(`PRAGMA user_version <= 1`) without destructive reset. Because Swift appended
+Antigravity in memory rather than persisting it to SQLite, legacy
+`coverage_ranges` and `directory_coverage_ranges` certify Claude and Codex
+history only. An additive, idempotently created local-only table
+`antigravity_coverage_ranges` tracks completed-day Antigravity persistence:
+uncovered historical days scan all three providers and commit all three coverage
+markers atomically; legacy-covered days (covered by `coverage_ranges` and
+`directory_coverage_ranges` but absent from `antigravity_coverage_ranges`) retain
+cached Claude and Codex rows untouched (preserving cached-only history whose
+source logs were removed) while atomically replacing any `agent == "agy"` rows
+for those days and marking `antigravity_coverage_ranges` in one transaction;
+only native-complete historical days (present in all three coverage tables) skip
+historical aggregate persistence, while the current local day is always scanned
+incrementally. Pre-upgrade `NULL` fingerprints continue to be adopted rather
+than purged. Billing-block `points` are constructed independently from a known
+regenerative block state—resolving `block_context_from` backwards from
+`points_from = min(initial_from, desired_from)` to the nearest preceding
+`>= 5h` idle gap across all local providers (or earliest available event when no
+such gap exists)—and reusing an in-memory `BlockAnchor` checkpoint at
+`retention_floor` plus incremental `UsageEventFileScan` (`reuse`/`resume`) on
+subsequent polls. `BlockAnchor` tracks `(canonical_path, file_size, modified,
+scanned_through, boundary)` for pre-`retention_floor` contributors: unchanged
+files hit `reuse` with zero reads, and a spanning file that passes offset and
+boundary validation (`resume`) with only `>= retention_floor` events in its
+appended tail preserves `BlockAnchor` and advances its tracked metadata without
+re-reading historical prefixes. Historical reconstruction runs only when inputs
+before `retention_floor` can change (pre-floor appended events, truncation,
+replacement, removal, failed boundary check, deeper range expansion, timezone
+change, or restart), ensuring full-history, narrow-range, expanded-range, and
+warm-cache restarted replays all produce identical point timestamps, costs, and
+model sets (including both cross-midnight blocks and multi-day continuous hourly
+chains) without repeatedly reading unchanged historical logs.
+
+The cache uses SQLite 3 (via bundled `rusqlite`, compatible with existing
+Swift-created SQLite files) with separate metadata, daily metric, session
+metric, and coverage tables (preserving `PRAGMA user_version = 1` and existing
+`session_metrics` timestamps unmodified). Decimal costs are stored as text to
+preserve exact values, writes use a single transaction, and the legacy JSON
+cache is removed when the SQLite store initializes.
 
 Each cache file has one owning machine. Rows loaded from it are stamped with
 that machine id before aggregation, even when older encoded records omitted the
@@ -169,7 +230,7 @@ not be captured in static globals so CLI and tests can safely isolate files.
 
 ### Persistent startup and bootstrap log
 
-The menu-bar process and local CLI runtimes establish an `AppCore` bootstrap
+The menu-bar process and local CLI runtimes establish a `ccusage-core` bootstrap
 logger before loading or creating configuration, state, machine-registry,
 cache, or dashboard assets. Construction is side-effect free. After command
 selection, menu-bar bootstrap and only CLI commands that enter a runtime call
@@ -230,21 +291,34 @@ and redaction of malformed JSON and SSH/process errors.
 
 ## Usage Integration and Aggregation
 
-The process boundary accepts an executable URL, argument list, environment, and
-timeout and returns stdout, stderr, and exit status. Only fixed argument arrays
-are passed to `Process`; no shell command interpolation is used. A nonzero exit,
-timeout, invalid JSON, or unsupported payload is a typed error suitable for UI
-guidance and HTTP error mapping.
+Local usage collection natively scans configured Claude Code, Codex, and
+Antigravity JSONL logs incrementally by byte offset in `ccusage-core`, prices
+events via the Rust LiteLLM + built-in fallback pricing engine, and computes
+5-hour billing blocks, daily metrics, and 15-minute session buckets directly
+without invoking a local `ccusage` subprocess or hard-link mirroring (see
+`design-docs/specs/design-rust-tauri-migration.md`).
 
-Each machine owns a validated Codex/Claude source plan. Local event loading
-merges selected scan roots by stable event identity. SSH collection uses the
-fixed positional adapter and per-agent environment isolation defined in
-`design-machine-session-source-directories.md`; configured paths can select
-data roots but can never add executables, arguments, environment names, or
-shell fragments.
+For remote SSH machines, the process boundary accepts an executable path,
+argument list, environment, and timeout and returns stdout, stderr, and exit
+status. Only fixed argument arrays are passed; no shell command interpolation
+is used. A nonzero exit, timeout, invalid JSON, or unsupported payload is a
+typed error suitable for UI guidance and HTTP error mapping.
 
-Decoders follow the ccusage 20.0.17+ `blocks --json`, `daily --json`, and
-`session --json` shapes. Detailed daily loading first accepts the flag-free
+Each machine owns a validated Codex/Claude source plan. For `local`, the local
+`ccusage` subprocess execution and multi-source local command coordinator
+instructions in `design-machine-session-source-directories.md` are explicitly
+superseded by the native Rust incremental JSONL scanner running over the
+resolved local `MachineSessionSourcePlan` roots (merging events by stable
+identity) plus Antigravity transcripts. The schema-v3 registry contract, path
+validation/normalization, source-plan resolution, cache-fingerprint
+invalidation, source-generation fencing, and remote SSH fixed positional adapter
+with per-agent environment isolation in
+`design-machine-session-source-directories.md` remain preserved unchanged;
+configured paths can select data roots but can never add executables, arguments,
+environment names, or shell fragments.
+
+Remote SSH decoders follow the ccusage 20.0.17+ `blocks --json`, `daily --json`,
+and `session --json` shapes. Detailed daily loading first accepts the flag-free
 ccusage 20.1+ shape, then falls back to and caches the 20.0.17
 `daily --json --by-agent` shape when necessary. Agent/model breakdowns are the
 source of truth for calendar-day, Monday-through-Sunday week, and calendar-month
@@ -257,8 +331,9 @@ summing model-level cost values exactly once per record; a provided aggregate
 must not be added again when model details are present. Fixtures document the
 accepted schema and protect against double counting.
 
-All internal monetary calculations use `Decimal`. JSON APIs emit numeric USD
-values at a documented precision; UI rounding is presentation-only.
+All internal monetary calculations use `Decimal` (`rust_decimal::Decimal`).
+JSON APIs emit numeric USD values at a documented precision; UI rounding is
+presentation-only.
 
 ### Project-directory dimension and filtering
 
@@ -319,51 +394,68 @@ per-session directory.
 
 `design-dashboard-dark-flat-effort-grouping.md` holds the full contract.
 
-For a local machine, directory-provenance coverage follows aggregate snapshot
-coverage rather than the former recent-event optimization. Initial week/history
-warming, an older custom-range expansion, and a targeted refresh load JSONL
-events for the same host-calendar days being materialized and reconcile them
-with that range's aggregate rows. Thus directory filtering works for all
-dashboard ranges whose source event logs are still present; it is not silently
-limited to the recent graph window. Deleted or unavailable historical event
-logs cannot be reconstructed from `ccusage` aggregates, so their usage remains
-unattributed and follows the documented `nil` filtering semantics.
+For a local machine, native JSONL scanning derives `daily_metrics` and
+`session_metrics` directly from Claude Code, Codex, and Antigravity logs with
+project-directory and reasoning-effort provenance across every materialized
+dashboard range; it is not silently limited to the recent graph window. When
+upgrading a compatible Swift-era SQLite database whose source logs for a cached
+historical Claude or Codex `(day, agent, model)` have since been removed, those
+valid cached rows are retained rather than dropped, remaining unattributed and
+following the documented `nil` filtering semantics.
 
-SQLite daily/session cache tables gain nullable directory columns and
-per-host-day directory-provenance coverage through an idempotent additive
-migration. Pre-change cached days begin as provenance-unscanned rather than
-being treated as complete. Their first directory-aware snapshot load scans the
-currently available local event logs and builds one complete replacement for
-that day's derived session partition. In one transaction it removes the prior
-session partition, inserts the replacement rows, and marks provenance coverage
-scanned, even when the replacement contains no attributed events. Authoritative
-daily aggregate rows are never removed or rewritten by this backfill.
+SQLite daily/session cache tables carry nullable directory and effort columns,
+per-host-day `directory_coverage_ranges`, and the local-only additive
+`antigravity_coverage_ranges` table through idempotent additive migrations
+without modifying remote cache semantics or source-generation fencing.
+Pre-change cached days lacking `directory_coverage_ranges` remain
+provenance-unscanned: their first directory-aware load retains authoritative
+cached Claude/Codex `daily_metrics` untouched and evaluates each cached
+`(agent, model)` partition against available local JSONL logs under a strict
+conservation rule (because legacy `session_metrics` has no source-file
+identity). A legacy `(day, agent, model)` session partition is replaced with
+directory- and effort-attributed 15-minute buckets **only** when scanned local
+events are complete—their summed integer token counts exactly equal the
+authoritative cached `daily_metrics` token totals (with at least one non-zero
+token count, or both cached and raw costs zero)—and the replacement buckets
+conserve the authoritative `daily_metrics` cost and token totals exactly. When
+surviving logs are partial/unverifiable (for example, one of two logs survives
+and reconstructs less than the cached daily/session total) or absent, the
+conservative fallback retains the existing valid cached `session_metrics` rows
+untouched without partial overwrite, duplication, or assigning missing usage to
+surviving directories. In the same transaction, missing Antigravity
+(`agent == "agy"`) rows are atomically replaced and both
+`directory_coverage_ranges` and `antigravity_coverage_ranges` are marked.
+Swift-era days already present in both `coverage_ranges` and
+`directory_coverage_ranges` but absent from `antigravity_coverage_ranges` retain
+all cached Claude and Codex rows untouched while atomically replacing any
+`agent == "agy"` rows for that day and marking `antigravity_coverage_ranges` in
+one `BEGIN IMMEDIATE ... COMMIT` transaction.
 
-Failure or interruption rolls back both the session replacement and coverage
-marker, retains the previously published snapshot, and leaves the day eligible
-for retry. A retry recomputes and replaces the complete partition; it never
-merges the replacement additively with legacy `nil` rows. Snapshot publication
-occurs only after commit, so no reader can observe both legacy and attributed
-copies. Completed historical days are reused without repeated JSONL scans; the
-current host day remains eligible for the same complete-partition replacement
-on refresh. Previously encoded records still decode a missing directory as
-`nil`. Unfiltered totals continue to come from authoritative aggregates and
-must be identical before backfill, after successful backfill, and after any
-failed or retried backfill.
+Failure or interruption rolls back both the row replacements and coverage
+markers, retains the previously published snapshot, and leaves the day eligible
+for retry. A retry recomputes and replaces the affected partition cleanly (for
+reconstructible provenance partitions or `agent == "agy"`); it never merges
+additively into duplicate legacy or Antigravity copies. Snapshot publication
+occurs only after commit, so no reader can observe partial or duplicated rows.
+Native-complete historical days (covered by `coverage_ranges`,
+`directory_coverage_ranges`, and `antigravity_coverage_ranges`) are reused
+without repeated historical aggregate writes; the current host day is always
+recomputed from incremental scans on refresh. Previously encoded records still
+decode a missing directory as `nil`. Unfiltered totals remain identical across
+initial backfill, reopen, and any failed or retried backfill.
 
-Raw `ccusage` daily/session rows that do not identify a project remain
-unattributed. An unfiltered query that does not request a directory breakdown
-continues to use the existing authoritative aggregate path. A daily query with
-one or more directory filters, or with the optional directory-breakdown request
-enabled, instead derives its rows by grouping the reconciled dashboard sessions
-by host calendar day, machine, agent, model, and directory. This supplies
-directory-resolved rows for filtering or chart splitting without inventing
-directory attribution for raw aggregate rows. Reconciliation preserves the
-authoritative aggregate cost and token allocation, so the directory-resolved
-rows, including their `nil` group, have the same unfiltered totals as the
-aggregate path. Unattributed session rows remain visible when a machine has no
-active directory selection and are excluded when that machine has one or more
-selected directories.
+Remote SSH `ccusage` daily/session rows and retained legacy unattributed rows
+that do not identify a project remain unattributed. An unfiltered query that
+does not request a directory breakdown continues to use `dashboardMetrics`. A
+daily query with one or more directory filters, or with the optional
+directory-breakdown request enabled, instead derives its rows by grouping
+`dashboardSessions` by host calendar day, machine, agent, model, and directory.
+Because local daily metrics and 15-minute session buckets are derived from the
+same priced events (and legacy backfill preserves authoritative daily totals),
+directory-resolved rows, including their `nil` group, have the same unfiltered
+totals as the aggregate path. Unattributed session rows remain visible when a
+machine has no active directory selection and are excluded when that machine has
+one or more selected directories.
 
 The read API adds an optional, repeatable query item
 `directory=<machine-id>:<full-directory>`. The complete value is percent
@@ -589,11 +681,11 @@ unchanged totals before and after successful or failed backfill. Targeted
 checks precede the full implementation gate:
 
 ```text
-swift test --filter DirectoryFeature
+cargo test -p ccusage-core directory
 cd frontend && bun test machineScope
 cd frontend && bun test api
-swift build
-swift test
+cargo build --workspace
+cargo test --workspace
 cd frontend && bun test
 ```
 
@@ -632,7 +724,8 @@ Every menu-bar, CLI, and dashboard cost query uses `baseline.activeBoundaryAt`
 as the lower bound after baseline validation. There is no parallel boundary
 calculation at presentation or API layers. This persisted derivation ensures a
 restart, cycle change, and subsequent poll all apply the same boundary contract
-while `ccusage --json` remains the sole monetary source.
+while the native local usage engine (for `local`) and remote `ccusage --json`
+(for SSH machines) remain the sole monetary sources.
 
 ### Boundary calculation and aggregation
 
@@ -648,37 +741,81 @@ Usage outside the selected interval is excluded. Tests use fixed clocks,
 calendars, and time zones and cover exact boundaries, Monday-based weeks,
 daylight-saving-relevant calendar transitions, cycle changes, and restart persistence.
 
-Cost is the sum of records in the selected period. Calendar-day, week, and month
-totals use exact daily agent/model rows; hourly and rolling custom-hour totals use
-session last-activity timestamps. Baseline metadata contributes no cost. With a positive
-budget, spent is the nonnegative cost, remaining is
-`max(budget - spent, 0)`, and the visual fraction is capped at 100% while the raw
-over-budget amount remains available. Without a budget, the UI shows an unset
+Cost is the sum of records in the selected half-open interval
+`[interval.start, interval.end)` where `interval.start == baseline.activeBoundaryAt`
+(inclusive start, exclusive end; an event at `start` is included and an event at
+`end` is excluded). Calendar-day, week, and month totals use exact daily
+agent/model rows. For `hourly` and rolling `customHours(n)` periods, 15-minute
+chart buckets (`dashboardSessions` / `session_metrics`) remain distinct from
+exact rolling-window inputs: local rolling totals sum unfloored priced local
+events satisfying `interval.start <= event.timestamp < interval.end` within the
+retained in-memory scan window `[retention_floor, today]`. When an active
+`customHours(n)` window begins before `retention_floor` (e.g., `customHours(240)`),
+completed interior days strictly between `start_day = local_day(interval.start)`
+and `retention_floor` are reused directly from `UsageAggregationCache` (daily or
+session aggregates, with zero raw log reads), while `start_day` is pinned in a
+bounded single-day active-boundary `UsageEventFileScan` slot so unchanged old
+logs hit `reuse` (zero re-reads) and appended logs hit `resume` (tail-only) on
+consecutive polls; advancing `start_day` or changing cycles immediately evicts
+the stale boundary slot, and one-off historical dashboard range scans never
+populate it. For every historical local `(day, agent, model)` partition—equally
+across both the recent window `[retention_floor, today]` and the pinned
+boundary day `start_day`—rolling totals select exactly one authoritative input:
+complete native or reconstructible legacy partitions (exact integer token match
+with cached `daily_metrics`) use exact unfloored raw event timestamps, whereas
+partial, unverifiable, or absent-log legacy partitions use **only** their
+retained SQLite `session_metrics` rows (never rewriting them, never substituting
+partial raw scans, and never adding raw events on top of cached rows), filtered
+by the same half-open `interval.start <= row.timestamp < interval.end` predicate
+and stored `row.directory` when directory filters are active. Remote SSH
+`session_metrics` rows continue using the same half-open timestamp filter. The
+menu-bar tray, CLI `usage-snapshot`, and `GET /api/budget` (unfiltered and
+directory-filtered) all apply this identical half-open window contract. Baseline metadata contributes no cost. With a
+positive budget, spent is the nonnegative cost, remaining is
+`max(budget - spent, 0)`, and the visual fraction is capped at 100% while the
+raw over-budget amount remains available. Without a budget, the UI shows an unset
 state rather than inventing a denominator.
 
 ## Menu-Bar Behavior
 
-The status item renders a dynamic pie whose filled sector is the capped budget
-fraction, followed by formatted USD cost in the selected period. Its menu exposes:
+Launching `ccusage-gauge-app` in tray mode runs as a macOS menu-bar accessory
+app sharing one in-process `MachineCollector`, `MachineDashboardRouter`, and
+`RateLimitUsageService` with no TCP listener. Startup honors
+`dashboardAutostart` from `ccusage-config.json`: when `true` (default), it opens
+the in-process `"main"` Tauri dashboard window automatically; when `false`, it
+keeps the window closed until opened from the tray menu. Closing the dashboard
+window hides/closes it and returns to accessory mode without stopping polling or
+quitting. Launching `ccusage-gauge dashboard` resolves the GUI executable via
+`CCUSAGE_GAUGE_DESKTOP_EXECUTABLE` (validated without sibling fallback when set)
+or sibling `ccusage-gauge-app` lookup when unset, and runs
+`ccusage-gauge-app --dashboard-only` to open a single tray-free in-process IPC
+window with no TCP listener that exits cleanly when the window closes.
 
-- budget usage as spent versus remaining, including a pie-chart presentation;
-- a budget editor persisted to the mutable state file;
-- aggregation-period choices, including hourly and a positive custom-hour value;
-- dashboard start, stop, and open actions;
-- a Settings submenu backed by `SMAppService.mainApp` for Launch at Login, and
-  a "Pie charts" multi-select. The multi-select chooses which of the budget,
-  Claude 5h, Claude weekly, Codex 5h, and Codex weekly pies are rendered in the
-  glyph and the dropdown. The default is budget only. See
-  `design-subscription-rate-limits.md`;
-- a warning status icon and Error Details submenu when ccusage validation or
-  collection fails, including the config path and a retry action;
-- current refresh or configuration errors and missing-`ccusage` guidance;
-- quit.
+The Tauri v2 tray icon renders a combined 2x Retina RGBA template image via
+`TrayIcon::set_icon_with_as_template` (area-proportional fill provider logos for
+Claude, Codex, and Gemini, the budget pie icon with warning triangle on failure,
+and optional inline ratio percentages), accompanied by the formatted USD cost
+via `TrayIcon::set_title` (when `menuBarShowCost` is enabled). Updates are
+skipped when display inputs are unchanged to prevent flicker. Its native menu
+exposes:
 
-On startup and each refresh, domain work runs away from the main actor. Only
-AppKit object creation and mutation run on the main actor. Opening the dashboard
-starts it first when necessary, then opens
-`http://127.0.0.1:<dashboardPort>/`.
+- live budget usage summary and selected rate-limit rows updated via
+  `MenuItem::set_text`;
+- `Usage icons` and `Ratio text` toggles plus a `Menu bar display…` settings
+  dialog persisted to `state.json`;
+- `Set budget…` (USD budget and contributing machines), `Aggregation period`
+  (`Hourly`, `Daily`, `Weekly`, `Monthly`, `Custom hours…`), and
+  `Refresh interval` controls persisted to `state.json`;
+- a `Settings` submenu with `Launch at Login` backed on macOS by pure-Rust
+  `SMAppService.mainAppService` FFI;
+- a warning status icon and `Error Details` submenu when collection or
+  configuration fails, including the config path and a `Retry validation`
+  action;
+- in-process dashboard window open/close toggle (`Open dashboard`,
+  `Open dashboard window` / `Close dashboard`), `Refresh`, and `Quit`.
+
+See `design-docs/specs/design-rust-tauri-migration.md` for full tray rendering
+and lifecycle details.
 
 ## Dashboard Service
 
@@ -691,23 +828,30 @@ Version-one routes are:
 
 - `GET /` and SPA asset paths: compiled frontend files, with SPA fallback only
   for non-API navigation paths;
-- `GET /api/recent`: model-summed timestamped cost series;
-- `GET /api/day?date=YYYY-MM-DD`: time-of-day breakdown for the selected local
-  date and its total;
-- `GET /api/period?range=today|yesterday|week|month`: total and series for a
-  predefined local-calendar period;
-- `GET /api/period?range=custom&start=YYYY-MM-DD&end=YYYY-MM-DD`: total and
-  series for inclusive whole local days, rejecting missing, malformed, or
-  reverse-ordered bounds;
+- `GET /api/recent`: model-summed 5-hour billing-block cost series (`points`),
+  computed independently of SQLite aggregate coverage with cold/warm-cache
+  parity including cross-midnight active blocks;
+- `GET /api/day?date=YYYY-MM-DD`: time-of-day billing-block breakdown (`points`)
+  for the selected local date and its total, preserving cold/warm-cache parity;
+- `GET /api/period?range=today|yesterday|week|month`: billing-block total and
+  series (`points`) for a predefined local-calendar period with cold/warm-cache
+  parity;
+- `GET /api/period?range=custom&start=YYYY-MM-DD&end=YYYY-MM-DD`: billing-block
+  total and series (`points`) for inclusive whole local days, rejecting missing,
+  malformed, or reverse-ordered bounds, with cold/warm-cache parity;
 - `GET /api/metrics?range=all|today|yesterday|week|month`: exact daily
   agent/model cost and token breakdowns for the selected period;
 - `GET /api/metrics?range=custom&start=YYYY-MM-DD&end=YYYY-MM-DD`: the same
   detailed metrics for inclusive whole local days;
 - `GET /api/cost-series?granularity=15min|hourly|daily&range=...`: filtered
-  graph source rows; 15-minute and hourly views use session last-activity
-  timestamps while daily uses exact daily agent/model breakdowns;
-- `GET /api/budget`: budget, selected-period cost, remaining amount, aggregation period,
-  active boundary, and the effective menu-bar refresh interval.
+  graph source rows; 15-minute and hourly views use 15-minute chart buckets
+  (`dashboardSessions` / `session_metrics`) while daily uses exact daily
+  agent/model breakdowns (or directory/effort-resolved session rollups);
+- `GET /api/budget`: budget, selected-period cost (applying the same exact
+  half-open `[activeBoundaryAt, end)` rolling contract as the tray and
+  `usage-snapshot`, both unfiltered and with `directory` filters), remaining
+  amount, aggregation period, active boundary, and the effective menu-bar
+  refresh interval.
 - `GET /api/rate-limits`: derived 5h and weekly subscription windows for the
   local Claude Code and Codex accounts. Upstream calls are throttled to one
   per provider every 60 seconds. The route is served on both routing surfaces,
@@ -735,9 +879,9 @@ the replacement cost-series resource finishes loading.
 
 The router coalesces concurrent API snapshot reads through an actor-isolated
 in-flight task and briefly reuses the completed result. A frontend refresh can
-therefore request metrics, cost series, and budget concurrently while AppCore
-runs only one snapshot load instead of one full `ccusage` process group per
-endpoint.
+therefore request metrics, cost series, and budget concurrently while
+`ccusage-core` runs only one snapshot load instead of one full collection pass
+per endpoint.
 
 The server starts snapshot prewarming as soon as its listener starts. Normal
 read endpoints reuse that completed snapshot for up to 60 seconds, making range
@@ -759,11 +903,13 @@ aggregation-period mutations remain menu-bar actions. Every explicit control
 mutation uses the common loopback authority, exact same-origin/fetch-metadata,
 and `X-CCUsage-Gauge-Mutation: 1` gate defined by the remote-machine design.
 
-Static assets are resolved in this order: an explicit development override,
-SwiftPM resources in development, then resources adjacent to the packaged
-executable/application bundle. Resolution is read-only and failure produces a
-diagnostic response rather than exposing a directory listing. Formula and Cask
-build validation must exercise their respective layouts.
+Static assets for `ccusage-gauge serve` are resolved in this order: an explicit
+`--assets` override, adjacent Formula/Linux `share/ccusage-gauge/web`, then
+macOS bundle `Contents/Resources/Web`. `ccusage-gauge-app` embeds compiled
+`frontend/dist` assets directly via Tauri. Resolution is read-only and failure
+produces a `503 assets_missing` diagnostic response rather than exposing a
+directory listing. Formula and Cask build validation must exercise their
+respective layouts.
 
 ## Remote Machine Collection
 
@@ -771,7 +917,8 @@ The dedicated behavior and security design is
 `design-docs/specs/design-remote-machine-collection.md`. `serve` loads
 `~/.config/ccusage-gauge/machines.json`, always adds the reserved synthetic
 `local` descriptor, and creates one independently cancellable poller per enabled
-machine. Local collection retains local event reconciliation. SSH collection
+machine. Local collection uses the native Rust incremental JSONL scanner and
+pricing engine. SSH collection
 executes the configured remote ccusage binary through a direct endpoint or the
 dedicated design's structured SSH proxy adapter and reuses the existing JSON
 decoder, but does not read host event logs or install a remote daemon. An
@@ -950,24 +1097,24 @@ selection defaults to the budget pie only.
 
 ## Rollout and Verification Constraints
 
-Implementation proceeds in dependency order: documentation; `AppCore` contracts
-and tests; menu-bar integration; web service and API; frontend and packaging;
-then full verification and documentation synchronization. Narrow target builds
-and tests run after each Swift milestone, followed by `swiftlint`. The final gate
-includes `mise run frontend:build`, `mise run build`, `mise run test`, CLI smoke checks,
-loopback HTTP checks, and release-scaffolding checks.
+Implementation proceeds in dependency order: documentation; `ccusage-core`
+contracts and unit tests; `ccusage-cli` commands and tests; `src-tauri` tray
+and dashboard app; packaging, smoke, and CI scripts; Swift artifact removal;
+then full verification and documentation synchronization. Narrow crate tests
+and `cargo clippy` run after each milestone. The final gate includes
+`mise run frontend:check`, `mise run frontend:test`, `mise run frontend:build`,
+`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo build --workspace`, CLI/dashboard/asset smoke checks, and Homebrew
+Formula/Cask `--dry-run` checks.
 
-The feature must not disturb existing Homebrew formula or Cask scripts. Built
-frontend assets must have an explicit packaged-resource location for both release
-forms. No commit or push is implied by this design.
+Built frontend assets must have an explicit packaged-resource location for both
+Homebrew Formula (`share/ccusage-gauge/web`) and Cask (`Contents/Resources/Web`
+plus Tauri embedded `frontend/dist`). No commit or push is implied by this
+design.
 
-Remote-machine rollout additionally requires `swift build`, `swift test`,
-`mise run test:coverage`, a clean `cd frontend && bun install && bun run build`,
-and `bash scripts/smoke-remote-machines.sh`. `mise run test:coverage` is the single
-repository-supported unit-coverage command: it runs SwiftPM with coverage,
-reports executable line coverage for `Sources/AppCore` and `Sources/AppCLI`
-while excluding tests, generated code, and copied web resources, and fails
-below 80.0%. Phase G uses Docker Compose under
+Remote-machine rollout additionally requires `cargo build --workspace`,
+`cargo test --workspace`, `cd frontend && bun install && bun run build`, and
+`bash scripts/smoke-remote-machines.sh`. Phase G uses Docker Compose under
 Colima only. An emulation-only collector keeps `serve` loopback-bound and
 unpublished; smoke calls run through `docker compose exec`. One keygen container
 creates the ephemeral SSH keypair in tmpfs and provisioning pipes it only into
@@ -980,14 +1127,18 @@ fallback.
 
 ## Risks Requiring Implementation Evidence
 
-- The exact v20.0.17 payload variants must be captured as sanitized fixtures
-  before finalizing Codable contracts.
-- Swift 6 actor isolation must be verified around `Process`, polling, AppKit, and
-  listener lifecycle rather than bypassed with unchecked concurrency.
+- Local native pricing, 5-hour billing block boundaries, directory attribution,
+  and reasoning-effort extraction must be verified against representative
+  Claude, Codex, and Antigravity JSONL fixtures without regressions.
+- Remote SSH v20.0.17+ payload variants must remain verified by sanitized
+  fixtures.
+- Async/thread safety around Tokio polling, Tauri main-thread tray updates,
+  PTY lifecycle, and loopback HTTP shutdown must be verified without data races
+  or orphaned child processes.
 - Calendar-period boundary tests must establish behavior across local
   time-zone changes and daylight-saving transitions.
-- Asset discovery must be tested from SwiftPM, Homebrew formula, and app-bundle
-  layouts.
+- Asset discovery must be tested from explicit `--assets`, Homebrew formula,
+  and macOS app-bundle layouts.
 - The selected HTTP implementation must preserve loopback-only binding without
   regressing package and release portability.
 - SSH argument-boundary tests must prove registry values cannot add commands or
