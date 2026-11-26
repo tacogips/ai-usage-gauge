@@ -17,6 +17,7 @@ public actor RateLimitUsageService {
   }
   private let claude: any RateLimitLiveFetching
   private let codex: any RateLimitLiveFetching
+  private let gemini: (any RateLimitLiveFetching)?
   private let fallback: (any CodexRateLimitFallbackReading)?
   private let minimumInterval: TimeInterval
   private let claudeMinimumInterval: TimeInterval
@@ -29,10 +30,11 @@ public actor RateLimitUsageService {
   func setWaiterHook(_ hook: @escaping @Sendable (Bool) async -> Void) { waiterHook = hook }
 
   public init(claude: any RateLimitLiveFetching, codex: any RateLimitLiveFetching,
-              codexFallback: (any CodexRateLimitFallbackReading)?, minimumInterval: TimeInterval = 60,
+              codexFallback: (any CodexRateLimitFallbackReading)?, gemini: (any RateLimitLiveFetching)? = nil,
+              minimumInterval: TimeInterval = 60,
               claudeMinimumInterval: TimeInterval? = nil, maximumBackoff: TimeInterval = 1800,
               store: (any RateLimitObservationStoring)? = nil, now: @escaping @Sendable () -> Date = { Date() }) {
-    self.claude = claude; self.codex = codex; self.fallback = codexFallback
+    self.claude = claude; self.codex = codex; self.fallback = codexFallback; self.gemini = gemini
     self.minimumInterval = minimumInterval; self.claudeMinimumInterval = claudeMinimumInterval ?? minimumInterval
     self.maximumBackoff = maximumBackoff; self.store = store; self.now = now
   }
@@ -40,12 +42,18 @@ public actor RateLimitUsageService {
     provider == .claude ? claudeMinimumInterval : minimumInterval
   }
   public func current() async -> RateLimitsResponse {
-    async let claudeResult = entry(for: .claude)
-    async let codexResult = entry(for: .codex)
-    let providers = await [claudeResult, codexResult]
+    async let claudeResult = entry(for: .claude, fetcher: claude)
+    async let codexResult = entry(for: .codex, fetcher: codex)
+    async let geminiResult = geminiEntry()
+    let providers = await [claudeResult, codexResult] + [geminiResult].compactMap { $0 }
     return RateLimitsResponse(generatedAt: now(), providers: providers)
   }
-  private func entry(for provider: RateLimitProvider) async -> ProviderRateLimits {
+  private func geminiEntry() async -> ProviderRateLimits? {
+    guard let gemini else { return nil }
+    return await entry(for: .gemini, fetcher: gemini)
+  }
+
+  private func entry(for provider: RateLimitProvider, fetcher: any RateLimitLiveFetching) async -> ProviderRateLimits {
     var state = states[provider] ?? State()
     let attemptTime = now()
     if !state.restored {
@@ -64,7 +72,6 @@ public actor RateLimitUsageService {
       let nextAttempt = max(last.addingTimeInterval(interval(for: provider)), state.retryAt ?? .distantPast)
       if attemptTime < nextAttempt { return cached }
     }
-    let fetcher = provider == .claude ? claude : codex
     let fallback = provider == .codex ? self.fallback : nil
     state.generation &+= 1
     let generation = state.generation

@@ -2,6 +2,10 @@ import AppCore
 import AppKit
 
 extension MenuBarDelegate {
+  static func statusTitle(_ snapshot: CostSnapshot) -> String {
+    snapshot.costSinceResetUSD.formatted(.currency(code: "USD").precision(.fractionLength(0)))
+  }
+
   func updateStatusTitle(_ budgetText: String) {
     budgetStatusText = budgetText
     let title = (currentState?.menuBarShowCost ?? true) ? budgetText : ""

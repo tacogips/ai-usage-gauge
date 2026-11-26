@@ -13,8 +13,25 @@ enum MenuBarUsageIcon {
   private static let claude = artwork(MenuBarProviderIcons.claude)
   private static let codex = artwork(MenuBarProviderIcons.chatGPT)
 
+  private static let gemini = artwork(NSImage(size: NSSize(width: 36, height: 36), flipped: false) { _ in
+    let mark = NSBezierPath()
+    mark.move(to: NSPoint(x: 18, y: 35))
+    mark.curve(to: NSPoint(x: 35, y: 18), controlPoint1: NSPoint(x: 20, y: 24), controlPoint2: NSPoint(x: 24, y: 20))
+    mark.curve(to: NSPoint(x: 18, y: 1), controlPoint1: NSPoint(x: 24, y: 16), controlPoint2: NSPoint(x: 20, y: 12))
+    mark.curve(to: NSPoint(x: 1, y: 18), controlPoint1: NSPoint(x: 16, y: 12), controlPoint2: NSPoint(x: 12, y: 16))
+    mark.curve(to: NSPoint(x: 18, y: 35), controlPoint1: NSPoint(x: 12, y: 20), controlPoint2: NSPoint(x: 16, y: 24))
+    mark.close()
+    NSColor.black.setFill()
+    mark.fill()
+    return true
+  })
+
   static func image(chart: PieChartID, fraction: Double?) -> NSImage {
-    let artwork = chart.provider == .claude ? claude : codex
+    let artwork = switch chart.provider {
+    case .claude: claude
+    case .gemini: gemini
+    case .codex, nil: codex
+    }
     let normalized = fraction.map { $0.isFinite ? min(max($0, 0), 1) : 0 }
     let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { bounds in
       artwork.outline.draw(in: bounds)

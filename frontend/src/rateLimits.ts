@@ -1,6 +1,6 @@
 import type { PieChartID, ProviderRateLimits, RateLimitCredits, RateLimitsResponse, RateLimitWindow } from "./api";
 
-export const pieChartIds: PieChartID[] = ["budget", "claude5h", "claudeWeekly", "claudeCredit", "codex5h", "codexWeekly", "codexCredit"];
+export const pieChartIds: PieChartID[] = ["budget", "claude5h", "claudeWeekly", "claudeCredit", "codex5h", "codexWeekly", "codexCredit", "gemini5h", "geminiWeekly"];
 export function normalizePieCharts(value: unknown): PieChartID[] {
   const values = Array.isArray(value) ? value : [];
   const selected = pieChartIds.filter((id) => values.includes(id));
@@ -21,7 +21,7 @@ export function toggleHiddenPieRatio(id: PieChartID, hidden: PieChartID[]): PieC
 export function isCreditChart(id: PieChartID): boolean { return id === "claudeCredit" || id === "codexCredit"; }
 export function rateLimitWindowFor(id: PieChartID, response?: RateLimitsResponse): { provider?: ProviderRateLimits; window?: RateLimitWindow | null } {
   if (id === "budget") return {};
-  const provider = response?.providers.find((item) => item.provider === (id.startsWith("claude") ? "claude" : "codex"));
+  const provider = response?.providers.find((item) => item.provider === id.replace(/(5h|Weekly|Credit)$/, ""));
   if (isCreditChart(id)) return { provider };
   return { provider, window: id.endsWith("5h") ? provider?.fiveHour : provider?.weekly };
 }

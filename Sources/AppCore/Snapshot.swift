@@ -118,7 +118,7 @@ private struct AuthoritativeUsageTotals {
   var cacheReadTokens = 0
 }
 
-private func calendarDayString(_ date: Date, calendar: Calendar) -> String {
+func calendarDayString(_ date: Date, calendar: Calendar) -> String {
   let components = calendar.dateComponents([.year, .month, .day], from: date)
   guard let year = components.year, let month = components.month, let day = components.day else {
     return ""
@@ -393,6 +393,7 @@ public struct SnapshotService: Sendable {
   public let aggregationCache: UsageAggregationCache?
   public let claudeUsageEventLoader: ClaudeUsageEventLoader?
   public let codexUsageEventLoader: CodexUsageEventLoader?
+  private let antigravityUsageLoader: AntigravityUsageLoader?
   let sourcePlanProvider: (@Sendable () async throws -> MachineSessionSourcePlan)?
   private let sourceConfigurationFingerprint: (@Sendable () -> String)?
   let sourceGenerationFence: MachineSessionSourceGenerationFence
@@ -406,6 +407,7 @@ public struct SnapshotService: Sendable {
     aggregationCache: UsageAggregationCache? = nil,
     claudeUsageEventLoader: ClaudeUsageEventLoader? = nil,
     codexUsageEventLoader: CodexUsageEventLoader? = nil,
+    antigravityUsageLoader: AntigravityUsageLoader? = nil,
     sourcePlanProvider: (@Sendable () async throws -> MachineSessionSourcePlan)? = nil,
     sourceConfigurationFingerprint: (@Sendable () -> String)? = nil
   ) {
@@ -416,6 +418,7 @@ public struct SnapshotService: Sendable {
     self.aggregationCache = aggregationCache
     self.claudeUsageEventLoader = claudeUsageEventLoader
     self.codexUsageEventLoader = codexUsageEventLoader
+    self.antigravityUsageLoader = antigravityUsageLoader
     self.sourcePlanProvider = sourcePlanProvider
     self.sourceConfigurationFingerprint = sourceConfigurationFingerprint
     sourceGenerationFence = MachineSessionSourceGenerationFence()
@@ -468,12 +471,18 @@ public struct SnapshotService: Sendable {
     let timezone = snapshotTimezoneIdentifier
     async let blockRecords = client.blocks(since: formatDay(initialFrom), until: today, timezone: timezone)
     async let usageRecords = loadUsage(ranges: ranges, cacheBefore: today, progress: progress)
-    let (rawPoints, loadedRanges) = try await (blockRecords, usageRecords)
+    async let antigravity = antigravityUsageLoader?.usage(
+      from: desiredFrom, through: desiredThrough, calendar: calculator.calendar, machine: client.machine
+    )
+    let (rawPoints, loadedRanges, agyUsage) = try await (blockRecords, usageRecords, antigravity)
     // Blocks from different session sources share block-aligned start times;
     // sum them so timestamp-keyed point merging keeps every source's cost.
-    let points = coalescingSameKeyPoints(rawPoints)
-    let freshMetrics = loadedRanges.flatMap(\.metrics)
-    let freshSessions = loadedRanges.flatMap(\.sessions)
+    let agyPoints = (agyUsage?.sessions ?? []).filter { $0.costUSD > .zero }.map {
+      CCUsageCostRecord(timestamp: $0.timestamp, costUSD: $0.costUSD, models: [$0.model], machine: $0.machine, directory: $0.directory)
+    }
+    let points = coalescingSameKeyPoints(rawPoints + agyPoints).sorted { $0.timestamp < $1.timestamp }
+    let freshMetrics = loadedRanges.flatMap(\.metrics) + (agyUsage?.metrics ?? [])
+    let freshSessions = loadedRanges.flatMap(\.sessions) + (agyUsage?.sessions ?? [])
     // The cached prefix is always sorted (SQLite `ORDER BY` on read, and the in-memory payload is
     // re-saved sorted below), so only the fresh partition is sorted and merged instead of re-sorting
     // the whole history each cycle. Output is identical to `(cached + fresh).sorted(by:)`.
@@ -538,6 +547,9 @@ public struct SnapshotService: Sendable {
       todayStart: todayStart,
       cached: cached
     )
+    async let antigravity = antigravityUsageLoader?.usage(
+      from: desiredFrom, through: todayStart, calendar: calculator.calendar, machine: client.machine
+    )
     let metrics: [CCUsageMetricRecord]
     let sessions: [CCUsageSessionMetricRecord]
     switch state.resetCycle {
@@ -549,11 +561,14 @@ public struct SnapshotService: Sendable {
       metrics = (cached?.metrics ?? []) + loadedRanges.flatMap(\.metrics)
       sessions = (cached?.sessions ?? []) + loadedRanges.flatMap(\.sessions)
     }
+    let agyUsage = try await antigravity
+    let allMetrics = metrics + (agyUsage?.metrics ?? [])
+    let allSessions = sessions + (agyUsage?.sessions ?? [])
     let cost = selectedPeriodCost(
       cycle: state.resetCycle,
       interval: interval,
-      metrics: metrics,
-      sessions: sessions,
+      metrics: allMetrics,
+      sessions: allSessions,
       calendar: calculator.calendar
     )
     return CostSnapshot(
@@ -564,8 +579,8 @@ public struct SnapshotService: Sendable {
       resetCycle: state.resetCycle,
       refreshIntervalSeconds: state.refreshIntervalSeconds ?? defaultRefreshIntervalSeconds,
       points: [],
-      dashboardMetrics: metrics,
-      dashboardSessions: sessions
+      dashboardMetrics: allMetrics,
+      dashboardSessions: allSessions
     )
   }
 

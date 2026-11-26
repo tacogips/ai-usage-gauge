@@ -169,6 +169,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ),
         claudeUsageEventLoader: .production(descriptor: localDescriptor),
         codexUsageEventLoader: .production(descriptor: localDescriptor),
+        antigravityUsageLoader: .production(),
         sourcePlanProvider: {
           MachineSessionSourcePlan(descriptor: localDescriptor)
         }
@@ -212,6 +213,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ),
             claudeUsageEventLoader: .production(descriptor: descriptor),
             codexUsageEventLoader: .production(descriptor: descriptor),
+            antigravityUsageLoader: .production(),
             sourcePlanProvider: {
               MachineSessionSourcePlan(descriptor: descriptor)
             }
@@ -386,6 +388,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     RateLimitMenuView.items(selection: selection, response: latestRateLimits, now: Date()).forEach { menu.addItem($0) }
     menu.addItem(.separator())
+    menu.addItem(usageIconsItem(selection: selection))
     let budgetItem = menu.addItem(withTitle: "Set budget…", action: #selector(setBudget), keyEquivalent: "b")
     budgetItem.target = self
     budgetItem.isEnabled = stateStore != nil
@@ -405,18 +408,14 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   private func errorDetailsItem(message: String) -> NSMenuItem {
     let title = collectionWarnings.isEmpty
-      ? (isUsageUnavailable ? "Warning: ccusage unavailable" : "Error Details")
-      : "Warning: \(collectionWarnings.count) machine collection failure\(collectionWarnings.count == 1 ? "" : "s")"
+      ? (isUsageUnavailable ? "Usage unavailable" : "Error Details")
+      : "\(collectionWarnings.count) machine\(collectionWarnings.count == 1 ? "" : "s") unavailable"
     let root = NSMenuItem(title: title, action: nil, keyEquivalent: "")
     root.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning")
     let submenu = NSMenu()
-    let detail = NSMenuItem(title: message, action: nil, keyEquivalent: "")
-    detail.isEnabled = false
-    detail.toolTip = message
-    submenu.addItem(detail)
-    let configPath = NSMenuItem(title: "Config: \(paths.configFile.path)", action: nil, keyEquivalent: "")
-    configPath.isEnabled = false
-    submenu.addItem(configPath)
+    submenu.addItem(MenuInformationItem.make(message, detail: message))
+    let configPath = "Config: \(paths.configFile.path)"
+    submenu.addItem(MenuInformationItem.make(configPath, detail: configPath))
     submenu.addItem(.separator())
     let retry = submenu.addItem(withTitle: "Retry validation", action: #selector(retryValidation), keyEquivalent: "")
     retry.target = self
@@ -738,10 +737,6 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
   }
 
-  private static func statusTitle(_ snapshot: CostSnapshot) -> String {
-    formatUSDCurrency(snapshot.costSinceResetUSD)
-  }
-
   private func configureStatusButton() {
     guard let button = statusItem.button else { return }
     button.imagePosition = .imageLeading
@@ -911,10 +906,24 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 @MainActor
 final class BudgetMenuView: NSView {
   private let snapshot: CostSnapshot
+  private let text: NSAttributedString
+  private static let textOrigin = NSPoint(x: 72, y: 16)
 
   init(snapshot: CostSnapshot) {
     self.snapshot = snapshot
-    super.init(frame: NSRect(x: 0, y: 0, width: 390, height: 86))
+    let budget = snapshot.budget.budgetUSD.map { formatUSDCurrency($0) } ?? "not set"
+    let usage = snapshot.budget.usagePercentage.map(formatPercentage) ?? "unavailable"
+    let period = formatUsagePeriod(for: snapshot.resetCycle, now: snapshot.generatedAt)
+    text = NSAttributedString(
+      string: "Spent \(formatUSDCurrency(snapshot.budget.spentUSD, minimumFractionDigits: 2)) (\(usage))\nBudget \(budget)\nPeriod \(period)",
+      attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
+    )
+    let textBounds = text.boundingRect(
+      with: NSSize(width: MenuInformationItem.maximumTextWidth, height: 1_000), options: .usesLineFragmentOrigin
+    )
+    super.init(frame: NSRect(
+      x: 0, y: 0, width: Self.textOrigin.x + ceil(textBounds.width) + 14, height: max(86, ceil(textBounds.height) + 32)
+    ))
     wantsLayer = true
   }
 
@@ -935,13 +944,9 @@ final class BudgetMenuView: NSView {
       NSColor.systemGreen.setFill()
       path.fill()
     }
-    let budget = snapshot.budget.budgetUSD.map { formatUSDCurrency($0) } ?? "not set"
-    let usage = snapshot.budget.usagePercentage.map(formatPercentage) ?? "unavailable"
-    let period = formatUsagePeriod(for: snapshot.resetCycle, now: snapshot.generatedAt)
-    let text = "Spent \(formatUSDCurrency(snapshot.budget.spentUSD, minimumFractionDigits: 2)) (\(usage))\nBudget \(budget)\nPeriod \(period)"
-    text.draw(
-      at: NSPoint(x: 72, y: 16),
-      withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
-    )
+    text.draw(with: NSRect(
+      origin: Self.textOrigin,
+      size: NSSize(width: bounds.width - Self.textOrigin.x - 14, height: bounds.height - 32)
+    ), options: .usesLineFragmentOrigin)
   }
 }

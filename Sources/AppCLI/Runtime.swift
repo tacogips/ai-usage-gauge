@@ -101,6 +101,7 @@ enum CommandRuntime {
         ),
         claudeUsageEventLoader: descriptor.kind == .local ? .production(descriptor: descriptor) : nil,
         codexUsageEventLoader: descriptor.kind == .local ? .production(descriptor: descriptor) : nil,
+        antigravityUsageLoader: descriptor.kind == .local ? .production() : nil,
         sourcePlanProvider: {
           if descriptor.kind == .local {
             return MachineSessionSourcePlan(descriptor: descriptor)
@@ -195,6 +196,7 @@ enum CommandRuntime {
       ),
       claudeUsageEventLoader: .production(descriptor: descriptor),
       codexUsageEventLoader: .production(descriptor: descriptor),
+      antigravityUsageLoader: .production(),
       sourcePlanProvider: {
         MachineSessionSourcePlan(descriptor: descriptor)
       }

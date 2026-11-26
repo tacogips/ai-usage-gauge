@@ -2,7 +2,7 @@ import { For, type Accessor, type JSX } from "solid-js";
 import type { BudgetResponse, PieChartID, RateLimitsResponse } from "./api";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { creditFraction, formatCredits, isCreditChart, normalizePieCharts, pieChartIds, pieFraction, rateLimitCreditsFor, rateLimitStatusLabel, rateLimitWindowFor } from "./rateLimits";
-const labels: Record<PieChartID, string> = { budget: "Budget", claude5h: "Claude Code 5h", claudeWeekly: "Claude Code weekly", claudeCredit: "Claude Code credit", codex5h: "Codex 5h", codexWeekly: "Codex weekly", codexCredit: "Codex credit" };
+const labels: Record<PieChartID, string> = { budget: "Budget", claude5h: "Claude Code 5h", claudeWeekly: "Claude Code weekly", claudeCredit: "Claude Code credit", codex5h: "Codex 5h", codexWeekly: "Codex weekly", codexCredit: "Codex credit", gemini5h: "Gemini 5h", geminiWeekly: "Gemini weekly" };
 export function PieChartPanel(props: { selection: Accessor<PieChartID[]>; onToggle: (id: PieChartID) => void; budget: Accessor<BudgetResponse | undefined>; response: Accessor<RateLimitsResponse | undefined>; children?: JSX.Element }) {
   const selection = () => normalizePieCharts(props.selection());
   return <CollapsibleSection id="subscription-usage" title="Subscription usage" label="subscription usage" class="panel pie-chart-panel"

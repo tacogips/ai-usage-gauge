@@ -10,8 +10,11 @@ export function RateLimitPanel(props: {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
     onCleanup(() => window.clearInterval(timer));
   });
-  const selected = (weekly: PieChartID, five: PieChartID, credit: PieChartID) =>
-    ([ ["Weekly", weekly], ["5h", five], ["Credit", credit] ] as const).filter(([, id]) => props.selection().includes(id));
+  const selected = (weekly: PieChartID, five: PieChartID, credit?: PieChartID) => {
+    const windows: [string, PieChartID][] = [["Weekly", weekly], ["5h", five]];
+    if (credit) windows.push(["Credit", credit]);
+    return windows.filter(([, id]) => props.selection().includes(id));
+  };
   const usage = (id: PieChartID) => {
     if (isCreditChart(id)) {
       const credits = rateLimitCreditsFor(id, props.response()).credits;
@@ -23,7 +26,7 @@ export function RateLimitPanel(props: {
   return <Show when={props.selection().some((id) => id !== "budget")}>
     <div class="rate-limit-panel">
       <Show when={!props.error} fallback={<p>Rate limits unavailable. Retrying automatically.</p>}>
-        <For each={([ ["Claude Code", "claudeWeekly", "claude5h", "claudeCredit"], ["Codex", "codexWeekly", "codex5h", "codexCredit"] ] as const)}>{([name, weekly, five, credit]) =>
+        <For each={([ ["Claude Code", "claudeWeekly", "claude5h", "claudeCredit"], ["Codex", "codexWeekly", "codex5h", "codexCredit"], ["Gemini", "geminiWeekly", "gemini5h"] ] as const)}>{([name, weekly, five, credit]) =>
           <Show when={selected(weekly, five, credit).length > 0}>
             <div class="rate-limit-provider-line">
               <strong class="rate-limit-provider-name">{name}</strong>

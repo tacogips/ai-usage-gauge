@@ -15,10 +15,12 @@ var targets: [Target] = [
       .brew(["sqlite3"])
     ]
   ),
+  .systemLibrary(name: "CPTY"),
   .target(
     name: "AppCore",
-    dependencies: ["CSQLite"],
-    resources: [.copy("Resources/Web")]
+    dependencies: ["CSQLite", "CPTY"],
+    resources: [.copy("Resources/Web")],
+    linkerSettings: [.linkedLibrary("util", .when(platforms: [.linux]))]
   ),
   .executableTarget(
     name: "AppCLI",

@@ -5,8 +5,8 @@ public enum RateLimitDisplayFormatting {
     guard let providerID = chart.provider else { return (nil, nil) }
     let provider = response?.providers.first { $0.provider == providerID }
     switch chart {
-    case .claude5h, .codex5h: return (provider, provider?.fiveHour)
-    case .claudeWeekly, .codexWeekly: return (provider, provider?.weekly)
+    case .claude5h, .codex5h, .gemini5h: return (provider, provider?.fiveHour)
+    case .claudeWeekly, .codexWeekly, .geminiWeekly: return (provider, provider?.weekly)
     case .budget, .claudeCredit, .codexCredit: return (provider, nil)
     }
   }
@@ -25,6 +25,8 @@ public enum RateLimitDisplayFormatting {
     case .codex5h: "Codex 5h"
     case .codexWeekly: "Codex weekly"
     case .codexCredit: "Codex credit"
+    case .gemini5h: "Gemini 5h"
+    case .geminiWeekly: "Gemini weekly"
     }
   }
 
@@ -83,6 +85,20 @@ public enum RateLimitDisplayFormatting {
     if provider.status == .unauthorized { return "\(name): unauthorized - sign in again with the CLI" }
     if chart.isCredit && provider.status == .ok { return "\(name): unavailable" }
     return "\(name): \(provider.message ?? "unavailable")"
+  }
+
+  public static func compactMenuLine(for chart: PieChartID, response: RateLimitsResponse?, now: Date) -> String {
+    let (provider, window) = entry(for: chart, in: response)
+    let name = title(for: chart)
+    guard let provider else { return "\(name) · Loading" }
+    let stale = provider.status == .stale ? " (stale)" : ""
+    if chart.isCredit, let credits = provider.credits { return "\(name) · \(creditSummary(credits))\(stale)" }
+    guard let window else {
+      let status = provider.status == .unauthorized ? "Sign in" : "Unavailable"
+      return "\(name) · \(status)"
+    }
+    let reset = resetText(resetsAt: window.resetsAt, now: now).replacingOccurrences(of: "resets in ", with: "reset ", options: .anchored)
+    return "\(name) · \(Int(window.remainingPercent.rounded()))% left · \(reset)\(stale)"
   }
 
   /// Tooltip lines for every provider whose extended usage is active.

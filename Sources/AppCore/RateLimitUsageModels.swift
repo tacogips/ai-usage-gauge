@@ -1,14 +1,16 @@
 import Foundation
 
-public enum RateLimitProvider: String, Codable, Sendable { case claude, codex }
+public enum RateLimitProvider: String, Codable, Sendable { case claude, codex, gemini }
 public enum RateLimitStatus: String, Codable, Sendable { case ok, stale, unauthorized, unavailable }
 public enum RateLimitErrorCode: String, Codable, Sendable, Error {
+  case cliMissing = "cli_missing"
   case credentialsMissing = "credentials_missing", credentialsUnreadable = "credentials_unreadable"
   case tokenExpired = "token_expired", unauthorized, rateLimited = "rate_limited"
   case httpError = "http_error", networkError = "network_error", timeout, invalidResponse = "invalid_response"
 
   public var message: String {
     switch self {
+    case .cliMissing: "Install the Google Antigravity CLI (agy)"
     case .credentialsMissing: "CLI credentials were not found"
     case .credentialsUnreadable: "CLI credentials could not be read"
     case .tokenExpired, .unauthorized: "Sign in again with the CLI to refresh credentials"

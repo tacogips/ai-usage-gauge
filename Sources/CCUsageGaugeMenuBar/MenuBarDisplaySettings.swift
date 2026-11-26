@@ -2,6 +2,36 @@ import AppCore
 import AppKit
 
 extension MenuBarDelegate {
+  func usageIconsItem(selection: [PieChartID]) -> NSMenuItem {
+    let root = NSMenuItem(title: "Usage icons", action: nil, keyEquivalent: "")
+    let submenu = NSMenu()
+    submenu.autoenablesItems = false
+    for id in PieChartID.menuBarCases {
+      let item = submenu.addItem(withTitle: RateLimitDisplayFormatting.title(for: id), action: #selector(toggleUsageIcon(_:)), keyEquivalent: "")
+      let selected = selection.contains(id)
+      item.target = self
+      item.representedObject = id.rawValue
+      item.state = selected ? .on : .off
+      item.isEnabled = currentState != nil && !(selected && selection.count == 1)
+    }
+    root.submenu = submenu
+    return root
+  }
+
+  @objc private func toggleUsageIcon(_ sender: NSMenuItem) {
+    guard let name = sender.representedObject as? String, let id = PieChartID(rawValue: name) else { return }
+    let enabled = sender.state != .on
+    Task {
+      guard await mutateState({ state in
+        if state.menuBarPieCharts.contains(id) != enabled {
+          state.menuBarPieCharts = PieChartSelection.toggled(id, in: state.menuBarPieCharts)
+        }
+      }) else { return }
+      updateStatusTitle(budgetStatusText)
+      (displaySettingsWindow?.contentView as? MenuBarDisplaySettingsView)?.update(state: currentState ?? AppState())
+    }
+  }
+
   @objc func showDisplaySettings() {
     if let window = displaySettingsWindow {
       (window.contentView as? MenuBarDisplaySettingsView)?.update(state: currentState ?? AppState())

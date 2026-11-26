@@ -1,7 +1,7 @@
 # ccusage-gauge
 
-**ccusage-gauge shows how much of your Claude Code and Codex (ChatGPT)
-subscription limits you have used — the 5-hour and weekly windows as used and
+**ccusage-gauge shows how much of your Claude Code, Codex (ChatGPT), and Gemini
+(Antigravity CLI) subscription limits you have used — the 5-hour and weekly windows as used and
 remaining percentages with reset countdowns, plus extra-usage credits — together
 with token counts and API-equivalent cost history.** It runs as a macOS menu-bar
 app, a native or browser dashboard, a CLI, and a local HTTP API.
@@ -12,16 +12,16 @@ ccusage-gauge displays two different kinds of information and keeps them apart:
 
 | Information | Meaning | Source |
 | --- | --- | --- |
-| Subscription limit usage: used/remaining % of the 5-hour and weekly windows, reset time | How much of your plan's allowance is left right now | Read directly from the providers' own usage endpoints with your local Claude Code and Codex CLI logins |
+| Subscription limit usage: used/remaining % of the 5-hour and weekly windows, reset time | How much of your plan's allowance is left right now | Provider usage endpoints for Claude Code and Codex, and the local Antigravity CLI status line for Gemini |
 | Extended usage ("credit") | Claude extra-usage spend against its monthly limit; Codex credit balance | Same usage endpoints |
-| Token counts and API-equivalent cost | What you have consumed, priced at API rates | Local Claude Code and Codex logs aggregated by [`ccusage`](https://github.com/ryoppippi/ccusage) |
+| Token counts and API-equivalent cost | What you have consumed, priced at API rates | Local Claude Code and Codex logs aggregated by [`ccusage`](https://github.com/ryoppippi/ccusage), plus local Antigravity CLI transcripts |
 
 Subscription percentages are **not** estimated from token cost; they are the
 values the providers report for your account.
 
 Where it appears:
 
-- **macOS menu bar**: Claude and ChatGPT/Codex icons that fill from bottom to
+- **macOS menu bar**: Claude, ChatGPT/Codex, and Gemini icons that fill from bottom to
   top as subscription usage rises, optional percentages, spend or budget
   progress, and a hover tooltip with credits.
 - **Dashboard** (native window or `ccusage-gauge serve` in a browser): a
@@ -33,13 +33,13 @@ Where it appears:
 
 ## FAQ
 
-- **Does it show remaining subscription percentage for Claude Code and Codex?**
-  Yes. Both providers' 5-hour and weekly windows are shown as used and
-  remaining percentages with reset countdowns.
+- **Does it show remaining subscription percentages?**
+  Yes. Claude Code, Codex, and Gemini windows show used and remaining
+  percentages with reset countdowns when the provider reports them.
 - **Does it support Codex / ChatGPT plans?** Yes, alongside Claude Code
   subscriptions. Codex credits and Claude extra usage are shown as "credit".
 - **Is the remaining percentage derived from ccusage cost?** No. Cost and tokens
-  come from ccusage; limits come from the providers' usage endpoints.
+  come from local usage logs. Limits come from the providers.
 - **Which platforms?** The menu-bar app is macOS (Apple silicon and Intel). The
   CLI and dashboard server also run on Linux.
 - **How do I install it?** `brew install --cask tacogips/tap/ccusage-gauge`
@@ -55,8 +55,8 @@ ccusage-gauge supports ccusage 20.0.17 and later. It automatically uses the
 ccusage 20.1.0.
 
 By default, the status item shows a budget-progress pie and cost for the selected
-aggregation period. You can instead show just the spending amount and Claude
-Code/Codex usage icons that fill from bottom to top as subscription usage rises.
+aggregation period. You can instead show the spending amount and Claude Code,
+Codex, or Gemini usage icons that fill from bottom to top as subscription usage rises.
 Percentages beside the icons are optional; see
 [Subscription usage and display controls](#subscription-usage-and-display-controls).
 Its menu supports budget editing, hourly/daily/weekly/
@@ -112,16 +112,16 @@ Quit and reopen **CCUsage Gauge** after upgrading so it uses the installed versi
 The SolidJS dashboard provides:
 
 - exact per-agent and per-model rows from `ccusage daily --json --by-agent` on
-  ccusage 20.0.17 and `ccusage daily --json` on ccusage 20.1.0 and later;
+  ccusage 20.0.17 and `ccusage daily --json` on ccusage 20.1.0 and later, plus
+  Antigravity CLI token and estimated cost rows;
 - a **Subscription usage** panel above the cost cards, with chart selection
   controls at the upper right and percentages always visible;
 - one compact line per provider, showing only enabled windows and their reset
   countdowns; disabling Codex 5h, for example, hides it from both chart and text;
 - optional **Claude Code credit** and **Codex credit** charts for extended usage
   (Claude extra usage spend and Codex credit balance);
-- independent subscription refresh (Codex every 60 seconds, Claude Code every
-  5 minutes) and countdown updates every
-  30 seconds;
+- independent subscription refresh (Codex and Gemini every 60 seconds, Claude
+  Code every 5 minutes) and countdown updates every 30 seconds;
 - compact chevron controls for collapsing sections and individual metric cards,
   with section choices remembered locally;
 - left-side model and agent filters;
@@ -394,7 +394,7 @@ cost-history loading does not delay their updates.
 
 ## Subscription usage and display controls
 
-The dashboard shows Claude Code and Codex subscription usage for the local
+The dashboard shows Claude Code, Codex, and Gemini subscription usage for the local
 machine's accounts. Enabled 5-hour and weekly windows show the percentage used
 and a compact reset countdown, such as `reset in 3d` or `reset in 2h`. Exact
 reset dates and times are omitted to keep the panel small. Dashboard pies show
@@ -420,13 +420,24 @@ Data comes from the following sources:
   from `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`). If the request
   fails, the newest rate-limit event in `$CODEX_HOME/sessions/**/*.jsonl` can
   provide a stale fallback.
+- Gemini reads the five-hour and weekly Gemini buckets from the
+  [Antigravity CLI status line](https://antigravity.google/docs/cli/statusline).
+  Install `agy` and sign in normally. The gauge starts a short-lived CLI
+  session with a temporary status line command. It sends no model prompts.
+
+Local Antigravity token history is collected from
+`~/.gemini/antigravity-cli/brain/*/.system_generated/logs/transcript.jsonl`.
+It appears under the `agy` agent in usage snapshots and dashboard filters.
+Cost estimates use [Google's published Gemini API rates](https://ai.google.dev/gemini-api/docs/pricing)
+for supported models. Models without a matching rate still contribute token
+counts. Antigravity history collection currently uses local transcripts.
 
 Credentials are read-only and held in memory only for a fetch attempt. Tokens
 are never refreshed, logged, stored, or returned by the app. The
 `GET /api/rate-limits` response contains derived usage numbers, statuses, plan
 types, and timestamps, not credentials or account IDs. Requests are limited to
-at most one attempt every 60 seconds for Codex and every 5 minutes for Claude
-Code, whose usage endpoint throttles frequent callers; both limits include
+at most one attempt every 60 seconds for Codex and Gemini and every 5 minutes
+for Claude Code, whose usage endpoint throttles frequent callers. The limits include
 failures. When a provider answers HTTP 429, the next attempt is delayed
 exponentially (one interval, then double, up to 30 minutes) and resets after a
 success. The last successful observation per provider is saved to
@@ -443,13 +454,13 @@ expired or authorization fails, run the relevant CLI to refresh its login.
 
 In the dashboard's **Subscription usage** panel, use the upper-right buttons to
 select budget, Claude Code 5h, Claude Code weekly, Claude Code credit, Codex 5h,
-Codex weekly, and Codex credit.
+Codex weekly, Codex credit, Gemini 5h, and Gemini weekly.
 The selection controls both the charts and the provider summary text and is
 saved in dashboard state.
 
-In the menu bar, open **Settings > Menu bar display…**. Usage icons and ratio
-text share one page of on/off switches. Changes are saved immediately, and the
-page stays open so you can change several options together.
+Click the menu bar item and open **Usage icons** to show or hide individual
+icons. Checked items are visible. **Settings > Menu bar display…** also lets
+you edit usage icons and ratio text together, with changes saved immediately.
 
 - **Usage icons** controls the budget and subscription icons. Keep at least one
   enabled. This selection is independent of the dashboard and is saved as

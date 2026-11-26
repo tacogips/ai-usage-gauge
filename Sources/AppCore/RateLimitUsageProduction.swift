@@ -9,6 +9,7 @@ extension RateLimitUsageService {
       codexFallback: CodexRateLimitSessionFallback(
         sessionsRoot: CodexHome.url(environment: environment).appendingPathComponent("sessions", isDirectory: true)
       ),
+      gemini: GeminiRateLimitFetcher(environment: environment),
       // Claude's usage endpoint throttles aggressively, so poll it less often than Codex.
       claudeMinimumInterval: 300,
       store: RateLimitObservationFileStore(

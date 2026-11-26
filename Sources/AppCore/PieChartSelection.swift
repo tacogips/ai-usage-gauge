@@ -1,5 +1,5 @@
 public enum PieChartID: String, Codable, CaseIterable, Sendable {
-  case budget, claude5h, claudeWeekly, claudeCredit, codex5h, codexWeekly, codexCredit
+  case budget, claude5h, claudeWeekly, claudeCredit, codex5h, codexWeekly, codexCredit, gemini5h, geminiWeekly
 
   /// Charts offered as menu-bar icons and ratio text; credit balances are shown in the tooltip instead.
   public static let menuBarCases: [PieChartID] = allCases.filter { !$0.isCredit }
@@ -9,6 +9,7 @@ public enum PieChartID: String, Codable, CaseIterable, Sendable {
     case .budget: nil
     case .claude5h, .claudeWeekly, .claudeCredit: .claude
     case .codex5h, .codexWeekly, .codexCredit: .codex
+    case .gemini5h, .geminiWeekly: .gemini
     }
   }
 
