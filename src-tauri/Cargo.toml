@@ -1,6 +1,6 @@
 [package]
 name = "ccusage-gauge-dashboard"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2021"
 description = "Native dashboard window hosted by ccusage-gauge"
 license = "MIT"
