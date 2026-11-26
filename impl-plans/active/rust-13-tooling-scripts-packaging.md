@@ -9,8 +9,10 @@
   - `scripts`
   - `.github/workflows/linux-amd64-build.yml`
   - `deploy/emulation/Dockerfile.collector`
+  - `target`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `target`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -87,6 +89,11 @@ Done when:
 1. All commands above exit `0` (including the serial Wave 6 workspace clippy + build gate joining Wave 5).
 2. The 4 Swift-only scripts and `Resources/DashboardInfo.plist` are removed.
 3. No script references `swift`, `swiftlint`, `.build/`, `Sources/AppCore/Version.swift`, `Sources/AppCore/Resources/Web`, or `CCUsageGaugeDashboard.app`.
+
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Authorized Cargo artifact root**: `target` (added to `writePaths` and `artifactRoots`, gitignored via `/target/`) authorizes Cargo clippy/build outputs in `target/debug/` and `target/release/` consumed by the updated smoke and Homebrew dry-run scripts.
+- **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; external OS `$TMPDIR` (`mktemp -d`) authorized for smoke scripts. Never stage or commit `target/`.
 
 ## Progress Log
 

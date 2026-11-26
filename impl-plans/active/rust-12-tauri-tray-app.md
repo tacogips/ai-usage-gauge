@@ -13,8 +13,10 @@
   - `src-tauri/src/dialogs.rs`
   - `src-tauri/src/launch_at_login.rs`
   - `src-tauri/tests/ipc_and_menu_tests.rs`
+  - `tmp/cargo-target/rust-12-tauri-tray-app`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `tmp/cargo-target/rust-12-tauri-tray-app`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -84,10 +86,15 @@ Existing Swift references to imitate:
 
 ```bash
 rustfmt --check src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/ipc.rs src-tauri/src/tray_menu.rs src-tauri/src/dialogs.rs src-tauri/src/launch_at_login.rs src-tauri/tests/ipc_and_menu_tests.rs
-cargo test --locked -p ccusage-gauge-app --test ipc_and_menu_tests
+CARGO_TARGET_DIR=tmp/cargo-target/rust-12-tauri-tray-app cargo test --locked -p ccusage-gauge-app --test ipc_and_menu_tests
 ```
 
 Done when both commands exit `0`, `src-tauri/src/bridge.rs` is removed, and all IPC, tray-model, dialog-validation, and launch-at-login tests pass. (Workspace-wide `cargo clippy` and `cargo build` run in serial Wave 6 join plan `rust-13`.)
+
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Authorized Cargo artifact root**: `tmp/cargo-target/rust-12-tauri-tray-app` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 5 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-12-tauri-tray-app`) with zero intra-wave path overlap or target lock contention.
+- **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
 
 ## Progress Log
 

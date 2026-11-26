@@ -27,8 +27,12 @@
   - `src-tauri/src/lib.rs`
   - `src-tauri/src/tray_icons.rs`
   - `crates/ccusage-core/tests/paths_types_tests.rs`
+  - `target`
+  - `tmp/cargo-home`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `target`
+  - `tmp/cargo-home`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -237,6 +241,19 @@ Done when:
 2. `cargo test --locked -p ccusage-core --test paths_types_tests` exits `0` with all test cases passing.
 3. No Swift files or `frontend/` tracked files were modified.
 
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Blocker resolved**: `Approved Cargo build and download artifact location` (`artifactRoots: []` with Cargo verification build outputs and uncached `rusqlite`/`portable-pty` crate downloads).
+- **Authorized artifact roots**:
+  - `target` (added to `writePaths` and `artifactRoots`, gitignored via `/target/`): authorized for all Cargo build and test outputs (`cargo check --workspace`, `cargo test --locked -p ccusage-core --test paths_types_tests`).
+  - `tmp/cargo-home` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`): authorized repo-local fallback Cargo registry/download cache (`CARGO_HOME=tmp/cargo-home`) if the ambient external Cargo cache is unavailable or read-only.
+- **External Cargo cache & temp scratch authority**:
+  - Prefer the ambient external Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, e.g. `/Users/taco/.cargo`) when writable to reuse already-cached crates and download only missing dependencies (`rusqlite`, `portable-pty`, and any other uncached workspace crates required to generate root `Cargo.lock`). If `${CARGO_HOME:-$HOME/.cargo}` is read-only or restricted, run Cargo commands with `CARGO_HOME=tmp/cargo-home` and leave `tmp/cargo-home` populated (gitignored) for read/lock reuse in Waves 2..7.
+  - External OS temp scratch (`$TMPDIR` / `tempfile`) is authorized for test fixtures.
+  - Never stage or commit `target/` or `tmp/cargo-home/`.
+
 ## Progress Log
 
 Record progress in a dedicated worker progress note (do not modify `impl-plans/active/` or run concurrent git commands). Read files fresh before editing and verify no unintended changes outside `writePaths`.
+
+- Step 6 partial: workspace manifests and module seams created; shared paths/types, root lockfile, tests, and verification remain. No artifact root is declared for Cargo build outputs or uncached dependency downloads; checkpoint amendment required before Cargo commands. Existing nested lock retained until root lock is generated. Formal review and finalization remain downstream.

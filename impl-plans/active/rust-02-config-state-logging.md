@@ -6,8 +6,10 @@
   - `crates/ccusage-core/src/config`
   - `crates/ccusage-core/src/state`
   - `crates/ccusage-core/tests/config_state_logging_tests.rs`
+  - `tmp/cargo-target/rust-02-config-state-logging`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `tmp/cargo-target/rust-02-config-state-logging`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -71,10 +73,15 @@ Existing Swift references to imitate:
 
 ```bash
 rustfmt --check crates/ccusage-core/src/config/*.rs crates/ccusage-core/src/state/*.rs crates/ccusage-core/tests/config_state_logging_tests.rs
-cargo test --locked -p ccusage-core --test config_state_logging_tests
+CARGO_TARGET_DIR=tmp/cargo-target/rust-02-config-state-logging cargo test --locked -p ccusage-core --test config_state_logging_tests
 ```
 
 Done when both commands exit `0`, all config, state, reset-window, pie-selection, and bootstrap-logger tests pass, and all files in `writePaths` stay under 1000 lines. (Crate-wide `cargo clippy` runs in serial Wave 3 join plan `rust-09` to avoid sibling-wave lint interference.)
+
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Authorized Cargo artifact root**: `tmp/cargo-target/rust-02-config-state-logging` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 2 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-02-config-state-logging`) with zero intra-wave path overlap or target lock contention.
+- **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
 
 ## Progress Log
 

@@ -12,8 +12,12 @@
   - `README.md`
   - `llms.txt`
   - `packaging/homebrew/README.md`
+  - `target`
+  - `frontend/dist`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `target`
+  - `frontend/dist`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -74,6 +78,13 @@ Done when:
 1. All automated verification commands above exit `0`.
 2. Zero `.swift` files or SwiftPM files remain in the repository.
 3. `AGENTS.md`, `README.md`, `llms.txt`, and `packaging/homebrew/README.md` accurately document the pure Rust + Tauri v2 workspace.
+
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Authorized build artifact roots**:
+  - `target` (added to `writePaths` and `artifactRoots`, gitignored via `/target/`) authorizes Cargo test, clippy, debug, and release build outputs consumed by the final verification gate and smoke scripts.
+  - `frontend/dist` (added to `writePaths` and `artifactRoots`, gitignored via `dist/`) authorizes generated output from `(cd frontend && bun run build)` while keeping all tracked `frontend/` source files untouched.
+- **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; external OS `$TMPDIR` (`mktemp -d`) authorized for smoke scripts. Never stage or commit `target/` or `frontend/dist/`.
 
 ## Progress Log
 

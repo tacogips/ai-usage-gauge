@@ -5,8 +5,10 @@
 - **writePaths**:
   - `crates/ccusage-core/src/aggregation`
   - `crates/ccusage-core/tests/aggregation_tests.rs`
+  - `target`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `target`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -83,6 +85,11 @@ cargo clippy --locked -p ccusage-core --all-targets -- -D warnings
 ```
 
 Done when all three commands exit `0` and every fixture above passes deterministically. (This serial Wave 3 join plan also validates `ccusage-core` clippy cleanliness across all joined Wave 2 modules.)
+
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Authorized Cargo artifact root**: `target` (added to `writePaths` and `artifactRoots`, gitignored via `/target/`) authorizes Cargo test and clippy build outputs for this serial Wave 3 join plan.
+- **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `target/`.
 
 ## Progress Log
 

@@ -5,8 +5,10 @@
 - **writePaths**:
   - `crates/ccusage-core/src/scanner`
   - `crates/ccusage-core/tests/scanner_tests.rs`
+  - `tmp/cargo-target/rust-03-incremental-scanner`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `tmp/cargo-target/rust-03-incremental-scanner`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -71,10 +73,15 @@ Existing Swift references to imitate:
 
 ```bash
 rustfmt --check crates/ccusage-core/src/scanner/*.rs crates/ccusage-core/tests/scanner_tests.rs
-cargo test --locked -p ccusage-core --test scanner_tests
+CARGO_TARGET_DIR=tmp/cargo-target/rust-03-incremental-scanner cargo test --locked -p ccusage-core --test scanner_tests
 ```
 
 Done when both commands exit `0` and all test cases above pass deterministically. (Crate-wide `cargo clippy` runs in serial Wave 3 join plan `rust-09`.)
+
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Authorized Cargo artifact root**: `tmp/cargo-target/rust-03-incremental-scanner` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 2 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-03-incremental-scanner`) with zero intra-wave path overlap or target lock contention.
+- **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
 
 ## Progress Log
 

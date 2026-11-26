@@ -5,8 +5,10 @@
 - **writePaths**:
   - `crates/ccusage-core/src/pricing`
   - `crates/ccusage-core/tests/pricing_tests.rs`
+  - `tmp/cargo-target/rust-04-pricing-engine`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `tmp/cargo-target/rust-04-pricing-engine`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -74,10 +76,15 @@ Existing Swift references to imitate:
 
 ```bash
 rustfmt --check crates/ccusage-core/src/pricing/*.rs crates/ccusage-core/tests/pricing_tests.rs
-cargo test --locked -p ccusage-core --test pricing_tests
+CARGO_TARGET_DIR=tmp/cargo-target/rust-04-pricing-engine cargo test --locked -p ccusage-core --test pricing_tests
 ```
 
 Done when both commands exit `0` and all pricing test cases pass with zero network access. (Crate-wide `cargo clippy` runs in serial Wave 3 join plan `rust-09`.)
+
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Authorized Cargo artifact root**: `tmp/cargo-target/rust-04-pricing-engine` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 2 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-04-pricing-engine`) with zero intra-wave path overlap or target lock contention.
+- **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
 
 ## Progress Log
 

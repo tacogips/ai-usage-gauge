@@ -5,8 +5,10 @@
 - **writePaths**:
   - `crates/ccusage-core/src/cache`
   - `crates/ccusage-core/tests/sqlite_stores_tests.rs`
+  - `tmp/cargo-target/rust-05-sqlite-stores`
 - **sharedPaths**: `[]`
-- **artifactRoots**: `[]`
+- **artifactRoots**:
+  - `tmp/cargo-target/rust-05-sqlite-stores`
 - **designReferences**:
   - `design-docs/specs/design-rust-tauri-migration.md`
   - `design-docs/specs/architecture.md`
@@ -83,10 +85,15 @@ Existing Swift references to imitate:
 
 ```bash
 rustfmt --check crates/ccusage-core/src/cache/*.rs crates/ccusage-core/tests/sqlite_stores_tests.rs
-cargo test --locked -p ccusage-core --test sqlite_stores_tests
+CARGO_TARGET_DIR=tmp/cargo-target/rust-05-sqlite-stores cargo test --locked -p ccusage-core --test sqlite_stores_tests
 ```
 
 Done when both commands exit `0` and all SQLite compatibility, legacy backfill, rollback/retry, and directory-name lifecycle tests pass. (Crate-wide `cargo clippy` runs in serial Wave 3 join plan `rust-09`.)
+
+## Amendment 2026-11-26 (blocked-wave-scope-or-contract, round 1)
+
+- **Authorized Cargo artifact root**: `tmp/cargo-target/rust-05-sqlite-stores` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 2 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-05-sqlite-stores`) with zero intra-wave path overlap or target lock contention.
+- **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
 
 ## Progress Log
 
