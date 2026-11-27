@@ -74,7 +74,7 @@ Existing Swift references to imitate:
 ## Verification Commands and Acceptance Criteria
 
 ```bash
-rustfmt --check crates/ccusage-core/src/remote/*.rs crates/ccusage-core/tests/remote_ssh_tests.rs
+rustfmt --edition 2021 --check crates/ccusage-core/src/remote/*.rs crates/ccusage-core/tests/remote_ssh_tests.rs
 CARGO_TARGET_DIR=tmp/cargo-target/rust-07-remote-ssh-registry cargo test --locked -p ccusage-core --test remote_ssh_tests
 ```
 
@@ -85,6 +85,27 @@ Done when both commands exit `0` and all registry, source-plan, mutation-owner, 
 - **Authorized Cargo artifact root**: `tmp/cargo-target/rust-07-remote-ssh-registry` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 2 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-07-remote-ssh-registry`) with zero intra-wave path overlap or target lock contention.
 - **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
 
+## Amendment 2026-11-27 (blocked-wave-scope-or-contract, round 2)
+
+- **Workspace edition on standalone `rustfmt` gate**: Standalone `rustfmt` defaults to Rust 2015 without a repository `rustfmt.toml` and rejects `async` functions in `crates/ccusage-core/src/remote/mutation_owner.rs`. Amended the verification gate to `rustfmt --edition 2021 --check crates/ccusage-core/src/remote/*.rs crates/ccusage-core/tests/remote_ssh_tests.rs` matching `[workspace.package] edition = "2021"` in `Cargo.toml`, keeping Wave 2 plans parallel without authorizing a root `rustfmt.toml`.
+
 ## Progress Log
 
 Record progress in a dedicated worker progress note; read each target file fresh before editing, capture pre/post content hashes to detect unexpected drift, never modify `impl-plans/active/` or run concurrent git operations, and keep all edits strictly within `writePaths`.
+
+### Implementation progress (2026-11-27)
+
+- Added plan-owned registry, source-plan, mutation-owner, SSH runner, diagnostics, and remote decoder modules, plus integration tests. The isolated `cargo test --locked -p ccusage-core --test remote_ssh_tests` passed 7 tests (log: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/test-final.log`).
+- The exact specified standalone `rustfmt --check` fails because rustfmt assumes Rust 2015; `rustfmt --edition 2021 --check` passes. Resolving the exact gate requires an authorized rustfmt configuration or a corrected verification command. Logs are in the plan evidence directory.
+- Completion remains open: remote source probing and comprehensive tests for SSH adapters, registry safety and migrations, mutation serialization and compensation, and decoder compatibility require further implementation or verification. Formal review remains downstream.
+
+### Continuation assessment (2026-11-27)
+
+- The exact isolated Cargo test passed 7 tests; the exact standalone rustfmt gate failed because it parses async Rust as edition 2015. Logs: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/test-current.log` and `rustfmt-current.log` in the same directory. A checkpoint amendment must authorize an applicable rustfmt configuration outside this plan or correct the gate to specify the workspace edition.
+- Remaining implementation and verification include the fixed remote path probe, normalized source fingerprints, partial local PATCH under the mutation lock, deletion compensation when disk restoration fails, deterministic coalescing, and broader registry, SSH and decoder tests. Review, commit and publication remain downstream.
+
+### Step 6 verification and blocker (2026-11-27)
+
+- Current isolated Cargo integration test passed 7 tests with offline dependency access; complete log: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/test-step6-final.log`.
+- The exact required standalone rustfmt command still exits 1 because it defaults to Rust 2015 and cannot parse async functions; complete log: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/rustfmt-step6-final.log`. A checkpoint amendment must correct the command to specify the workspace edition or authorize an applicable configuration outside the current write scope.
+- Implementation remains incomplete: remote probing, normalized fingerprints, partial local PATCH, deletion compensation, deterministic coalescing, and the broader required behavioral tests remain outstanding. Formal review and workflow finalization are downstream.

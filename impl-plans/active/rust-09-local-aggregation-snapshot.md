@@ -79,7 +79,7 @@ Existing Swift references to imitate:
 ## Verification Commands and Acceptance Criteria
 
 ```bash
-rustfmt --check crates/ccusage-core/src/aggregation/*.rs crates/ccusage-core/tests/aggregation_tests.rs
+rustfmt --edition 2021 --check crates/ccusage-core/src/aggregation/*.rs crates/ccusage-core/tests/aggregation_tests.rs
 cargo test --locked -p ccusage-core --test aggregation_tests
 cargo clippy --locked -p ccusage-core --all-targets -- -D warnings
 ```
@@ -90,6 +90,11 @@ Done when all three commands exit `0` and every fixture above passes determinist
 
 - **Authorized Cargo artifact root**: `target` (added to `writePaths` and `artifactRoots`, gitignored via `/target/`) authorizes Cargo test and clippy build outputs for this serial Wave 3 join plan.
 - **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `target/`.
+
+## Amendment 2026-11-27 (blocked-wave-scope-or-contract, round 2)
+
+- **Workspace edition on standalone `rustfmt` gate**: Updated verification command to `rustfmt --edition 2021 --check crates/ccusage-core/src/aggregation/*.rs crates/ccusage-core/tests/aggregation_tests.rs` matching `[workspace.package] edition = "2021"`.
+- **SQLite `source_day` readback compatibility**: Consume `rust-05-sqlite-stores`'s additive `UsageAggregationCache::merge_day` / coalesced `load()` / `session_metrics()` and `session_metrics_for_day(day, start, end)` contract transparently without altering `types.rs` or UTC 15-minute flooring (`design-rust-tauri-migration.md:123`).
 
 ## Progress Log
 

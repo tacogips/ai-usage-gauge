@@ -77,7 +77,7 @@ Existing Swift references to imitate:
 ## Verification Commands and Acceptance Criteria
 
 ```bash
-rustfmt --check crates/ccusage-core/src/dashboard/*.rs crates/ccusage-core/tests/dashboard_router_tests.rs
+rustfmt --edition 2021 --check crates/ccusage-core/src/dashboard/*.rs crates/ccusage-core/tests/dashboard_router_tests.rs
 cargo test --locked -p ccusage-core --test dashboard_router_tests
 cargo clippy --locked -p ccusage-core --all-targets -- -D warnings
 ```
@@ -88,6 +88,10 @@ Done when all three commands exit `0` and all router, query, security-gate, HTTP
 
 - **Authorized Cargo artifact root**: `target` (added to `writePaths` and `artifactRoots`, gitignored via `/target/`) authorizes Cargo test and clippy build outputs for this serial Wave 4 join plan.
 - **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `target/`.
+
+## Amendment 2026-11-27 (blocked-wave-scope-or-contract, round 2)
+
+- **Workspace edition on standalone `rustfmt` gate**: Updated verification command to `rustfmt --edition 2021 --check crates/ccusage-core/src/dashboard/*.rs crates/ccusage-core/tests/dashboard_router_tests.rs` matching `[workspace.package] edition = "2021"` so `async` syntax in `http_server.rs` / `api_client.rs` / `router.rs` is parsed cleanly.
 
 ## Progress Log
 

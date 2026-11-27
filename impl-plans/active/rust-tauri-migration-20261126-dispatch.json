@@ -69,6 +69,10 @@
       {
         "decision": "Amendment 2026-11-26 round 1: Authorize Cargo build output, dependency cache fallback, and frontend dist artifactRoots across Wave 1..7 plans.",
         "rationale": "Resolved Wave 1 blocker on rust-01-workspace-foundation (Approved Cargo build and download artifact location) by authorizing target and tmp/cargo-home in rust-01, isolated per-plan CARGO_TARGET_DIR artifactRoots (tmp/cargo-target/<planId>) in parallel Waves 2 and 5 (rust-02..rust-08, rust-11, rust-12), target in serial Waves 3, 4, 6, and 7 (rust-09, rust-10, rust-13, rust-14), and frontend/dist in rust-14 while preserving stable plan IDs, DAG, and sharedPaths."
+      },
+      {
+        "decision": "Amendment 2026-11-27 round 2: Specify --edition 2021 on standalone rustfmt verification gates and authorize additive local-only session_metrics.source_day persistence/readback contract in rust-05-sqlite-stores.",
+        "rationale": "Resolved Wave 2 blockers on rust-04-pricing-engine and rust-07-remote-ssh-registry (and prevented identical failures in rust-05, rust-09..rust-12) by passing --edition 2021 to standalone rustfmt --check matching Cargo.toml without introducing shared root rustfmt.toml write paths. Resolved Wave 2 blocker on rust-05-sqlite-stores by adding an idempotent nullable local-only source_day TEXT column (and session_metrics_source_day_idx) on session_metrics, preserving exact UTC 15-minute flooring, existing legacy timestamps (source_day IS NULL), cached-only history, remote cache schema parity, and coalesced readback/session_metrics_for_day semantics across local-day boundaries. Recorded previously accepted plans (rust-01, rust-02, rust-03, rust-06, rust-08) in acceptedDependencies."
       }
     ],
     "intentionalTradeoffs": [
@@ -106,107 +110,34 @@
       "packaging/homebrew/README.md"
     ]
   },
-  "plans": [
+  "acceptedDependencies": [
     {
       "planId": "rust-01-workspace-foundation",
       "planPath": "impl-plans/active/rust-01-workspace-foundation.md",
-      "wave": 1,
-      "dependsOn": [],
-      "writePaths": [
-        ".gitignore",
-        "Cargo.toml",
-        "Cargo.lock",
-        "crates/ccusage-core/Cargo.toml",
-        "crates/ccusage-core/src/lib.rs",
-        "crates/ccusage-core/src/version.rs",
-        "crates/ccusage-core/src/paths.rs",
-        "crates/ccusage-core/src/types.rs",
-        "crates/ccusage-core/src/config/mod.rs",
-        "crates/ccusage-core/src/state/mod.rs",
-        "crates/ccusage-core/src/scanner/mod.rs",
-        "crates/ccusage-core/src/pricing/mod.rs",
-        "crates/ccusage-core/src/cache/mod.rs",
-        "crates/ccusage-core/src/aggregation/mod.rs",
-        "crates/ccusage-core/src/rate_limits/mod.rs",
-        "crates/ccusage-core/src/remote/mod.rs",
-        "crates/ccusage-core/src/dashboard/mod.rs",
-        "crates/ccusage-cli/Cargo.toml",
-        "crates/ccusage-cli/src/main.rs",
-        "src-tauri/Cargo.toml",
-        "src-tauri/Cargo.lock",
-        "src-tauri/src/lib.rs",
-        "src-tauri/src/tray_icons.rs",
-        "crates/ccusage-core/tests/paths_types_tests.rs",
-        "target",
-        "tmp/cargo-home"
-      ],
-      "sharedPaths": [],
-      "artifactRoots": [
-        "target",
-        "tmp/cargo-home"
-      ],
-      "acceptanceCriteria": [
-        "Root Cargo.toml and Cargo.lock exist, src-tauri/Cargo.lock is removed, /target/ is in .gitignore, and cargo check --workspace exits 0.",
-        "cargo test --locked -p ccusage-core --test paths_types_tests exits 0 with all AppPaths env-override and Swift/frontend wire-parity serialization tests passing.",
-        "No Swift files or frontend/ tracked files were modified."
-      ],
-      "verification": [
-        "cargo check --workspace",
-        "cargo test --locked -p ccusage-core --test paths_types_tests"
-      ]
+      "provides": "Root Cargo workspace (ccusage-core, ccusage-cli, ccusage-gauge-app), locked Cargo.lock, AppPaths, shared wire/domain types, and module seams"
     },
     {
       "planId": "rust-02-config-state-logging",
       "planPath": "impl-plans/active/rust-02-config-state-logging.md",
-      "wave": 2,
-      "dependsOn": [
-        "rust-01-workspace-foundation"
-      ],
-      "writePaths": [
-        "crates/ccusage-core/src/config",
-        "crates/ccusage-core/src/state",
-        "crates/ccusage-core/tests/config_state_logging_tests.rs",
-        "tmp/cargo-target/rust-02-config-state-logging"
-      ],
-      "sharedPaths": [],
-      "artifactRoots": [
-        "tmp/cargo-target/rust-02-config-state-logging"
-      ],
-      "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-02-config-state-logging cargo test --locked -p ccusage-core --test config_state_logging_tests exit 0.",
-        "All config, state, reset-window, pie-selection, and bootstrap-logger tests pass with exact JSON and permission compatibility.",
-        "All files in writePaths stay under 1000 lines."
-      ],
-      "verification": [
-        "rustfmt --check crates/ccusage-core/src/config/*.rs crates/ccusage-core/src/state/*.rs crates/ccusage-core/tests/config_state_logging_tests.rs",
-        "CARGO_TARGET_DIR=tmp/cargo-target/rust-02-config-state-logging cargo test --locked -p ccusage-core --test config_state_logging_tests"
-      ]
+      "provides": "ConfigStore, StateStore, BootstrapLogger, and atomic 0700/0600 persistence"
     },
     {
       "planId": "rust-03-incremental-scanner",
       "planPath": "impl-plans/active/rust-03-incremental-scanner.md",
-      "wave": 2,
-      "dependsOn": [
-        "rust-01-workspace-foundation"
-      ],
-      "writePaths": [
-        "crates/ccusage-core/src/scanner",
-        "crates/ccusage-core/tests/scanner_tests.rs",
-        "tmp/cargo-target/rust-03-incremental-scanner"
-      ],
-      "sharedPaths": [],
-      "artifactRoots": [
-        "tmp/cargo-target/rust-03-incremental-scanner"
-      ],
-      "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-03-incremental-scanner cargo test --locked -p ccusage-core --test scanner_tests exit 0.",
-        "All incremental byte-offset reuse/resume/rescan, boundary check, Claude/Codex/Antigravity parsing, Codex bounded reverse-scan + append-resume parity, and directory/effort attribution tests pass deterministically."
-      ],
-      "verification": [
-        "rustfmt --check crates/ccusage-core/src/scanner/*.rs crates/ccusage-core/tests/scanner_tests.rs",
-        "CARGO_TARGET_DIR=tmp/cargo-target/rust-03-incremental-scanner cargo test --locked -p ccusage-core --test scanner_tests"
-      ]
+      "provides": "Incremental byte-offset JSONL scanner for Claude Code, Codex, and Antigravity session logs"
     },
+    {
+      "planId": "rust-06-rate-limits",
+      "planPath": "impl-plans/active/rust-06-rate-limits.md",
+      "provides": "Claude, Codex, and Gemini rate-limit fetchers and coordinator"
+    },
+    {
+      "planId": "rust-08-tray-icon-renderer",
+      "planPath": "impl-plans/active/rust-08-tray-icon-renderer.md",
+      "provides": "RGBA template tray icon renderer with area-proportional provider logos, budget pie/warning, and anti-flicker rendering"
+    }
+  ],
+  "plans": [
     {
       "planId": "rust-04-pricing-engine",
       "planPath": "impl-plans/active/rust-04-pricing-engine.md",
@@ -224,11 +155,11 @@
         "tmp/cargo-target/rust-04-pricing-engine"
       ],
       "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-04-pricing-engine cargo test --locked -p ccusage-core --test pricing_tests exit 0.",
+        "rustfmt --edition 2021 --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-04-pricing-engine cargo test --locked -p ccusage-core --test pricing_tests exit 0.",
         "All LiteLLM cache refresh, offline fallback, built-in table, 5m/1h cache-creation, above-200k tiered pricing, and Antigravity date-effective pricing tests pass with zero network access."
       ],
       "verification": [
-        "rustfmt --check crates/ccusage-core/src/pricing/*.rs crates/ccusage-core/tests/pricing_tests.rs",
+        "rustfmt --edition 2021 --check crates/ccusage-core/src/pricing/*.rs crates/ccusage-core/tests/pricing_tests.rs",
         "CARGO_TARGET_DIR=tmp/cargo-target/rust-04-pricing-engine cargo test --locked -p ccusage-core --test pricing_tests"
       ]
     },
@@ -249,37 +180,12 @@
         "tmp/cargo-target/rust-05-sqlite-stores"
       ],
       "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-05-sqlite-stores cargo test --locked -p ccusage-core --test sqlite_stores_tests exit 0.",
-        "All SQLite UsageAggregationCache, DashboardStateStore, DashboardDirectoryNameStore, legacy Swift-cache compatibility/backfill, rollback/retry, and directory-name lifecycle tests pass."
+        "rustfmt --edition 2021 --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-05-sqlite-stores cargo test --locked -p ccusage-core --test sqlite_stores_tests exit 0.",
+        "All SQLite UsageAggregationCache, DashboardStateStore, DashboardDirectoryNameStore, legacy Swift-cache compatibility/backfill, additive local-only source_day local-midnight boundary persistence/coalescing, rollback/retry, and directory-name lifecycle tests pass."
       ],
       "verification": [
-        "rustfmt --check crates/ccusage-core/src/cache/*.rs crates/ccusage-core/tests/sqlite_stores_tests.rs",
+        "rustfmt --edition 2021 --check crates/ccusage-core/src/cache/*.rs crates/ccusage-core/tests/sqlite_stores_tests.rs",
         "CARGO_TARGET_DIR=tmp/cargo-target/rust-05-sqlite-stores cargo test --locked -p ccusage-core --test sqlite_stores_tests"
-      ]
-    },
-    {
-      "planId": "rust-06-rate-limits",
-      "planPath": "impl-plans/active/rust-06-rate-limits.md",
-      "wave": 2,
-      "dependsOn": [
-        "rust-01-workspace-foundation"
-      ],
-      "writePaths": [
-        "crates/ccusage-core/src/rate_limits",
-        "crates/ccusage-core/tests/rate_limits_tests.rs",
-        "tmp/cargo-target/rust-06-rate-limits"
-      ],
-      "sharedPaths": [],
-      "artifactRoots": [
-        "tmp/cargo-target/rust-06-rate-limits"
-      ],
-      "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-06-rate-limits cargo test --locked -p ccusage-core --test rate_limits_tests exit 0.",
-        "All Claude, Codex, and Gemini (agy PTY) rate-limit fetcher, redaction, throttling, coalescing, and display-formatting tests pass."
-      ],
-      "verification": [
-        "rustfmt --check crates/ccusage-core/src/rate_limits/*.rs crates/ccusage-core/tests/rate_limits_tests.rs",
-        "CARGO_TARGET_DIR=tmp/cargo-target/rust-06-rate-limits cargo test --locked -p ccusage-core --test rate_limits_tests"
       ]
     },
     {
@@ -299,38 +205,12 @@
         "tmp/cargo-target/rust-07-remote-ssh-registry"
       ],
       "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-07-remote-ssh-registry cargo test --locked -p ccusage-core --test remote_ssh_tests exit 0.",
+        "rustfmt --edition 2021 --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-07-remote-ssh-registry cargo test --locked -p ccusage-core --test remote_ssh_tests exit 0.",
         "All machine registry v1-v3 migration, source-plan resolution, mutation-owner serialization/rollback, SSH argv/diagnostic classification, and remote ccusage decoder tests pass."
       ],
       "verification": [
-        "rustfmt --check crates/ccusage-core/src/remote/*.rs crates/ccusage-core/tests/remote_ssh_tests.rs",
+        "rustfmt --edition 2021 --check crates/ccusage-core/src/remote/*.rs crates/ccusage-core/tests/remote_ssh_tests.rs",
         "CARGO_TARGET_DIR=tmp/cargo-target/rust-07-remote-ssh-registry cargo test --locked -p ccusage-core --test remote_ssh_tests"
-      ]
-    },
-    {
-      "planId": "rust-08-tray-icon-renderer",
-      "planPath": "impl-plans/active/rust-08-tray-icon-renderer.md",
-      "wave": 2,
-      "dependsOn": [
-        "rust-01-workspace-foundation"
-      ],
-      "writePaths": [
-        "src-tauri/assets",
-        "src-tauri/src/tray_icons.rs",
-        "src-tauri/tests/tray_icons_tests.rs",
-        "tmp/cargo-target/rust-08-tray-icon-renderer"
-      ],
-      "sharedPaths": [],
-      "artifactRoots": [
-        "tmp/cargo-target/rust-08-tray-icon-renderer"
-      ],
-      "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-08-tray-icon-renderer cargo test --locked -p ccusage-gauge-app --test tray_icons_tests exit 0.",
-        "All RGBA template rasterization, area-proportional fill geometry, budget pie/warning triangle, inline ratio-label, and anti-flicker dedup tests pass."
-      ],
-      "verification": [
-        "rustfmt --check src-tauri/src/tray_icons.rs src-tauri/tests/tray_icons_tests.rs",
-        "CARGO_TARGET_DIR=tmp/cargo-target/rust-08-tray-icon-renderer cargo test --locked -p ccusage-gauge-app --test tray_icons_tests"
       ]
     },
     {
@@ -354,11 +234,11 @@
         "target"
       ],
       "acceptanceCriteria": [
-        "rustfmt --check, cargo test --locked -p ccusage-core --test aggregation_tests, and cargo clippy --locked -p ccusage-core --all-targets -- -D warnings exit 0.",
+        "rustfmt --edition 2021 --check, cargo test --locked -p ccusage-core --test aggregation_tests, and cargo clippy --locked -p ccusage-core --all-targets -- -D warnings exit 0.",
         "All 5-hour billing block BlockAnchor/cold-warm parity, exact rolling-window, long customHours(240) active-boundary slot, legacy provenance backfill, and multi-machine snapshot collector fixtures pass deterministically."
       ],
       "verification": [
-        "rustfmt --check crates/ccusage-core/src/aggregation/*.rs crates/ccusage-core/tests/aggregation_tests.rs",
+        "rustfmt --edition 2021 --check crates/ccusage-core/src/aggregation/*.rs crates/ccusage-core/tests/aggregation_tests.rs",
         "cargo test --locked -p ccusage-core --test aggregation_tests",
         "cargo clippy --locked -p ccusage-core --all-targets -- -D warnings"
       ]
@@ -381,11 +261,11 @@
         "target"
       ],
       "acceptanceCriteria": [
-        "rustfmt --check, cargo test --locked -p ccusage-core --test dashboard_router_tests, and cargo clippy --locked -p ccusage-core --all-targets -- -D warnings exit 0.",
+        "rustfmt --edition 2021 --check, cargo test --locked -p ccusage-core --test dashboard_router_tests, and cargo clippy --locked -p ccusage-core --all-targets -- -D warnings exit 0.",
         "All /api/* router, query, loopback security-gate, HTTP server/client, StaticAssetResolver, and desktop-executable resolution tests pass."
       ],
       "verification": [
-        "rustfmt --check crates/ccusage-core/src/dashboard/*.rs crates/ccusage-core/tests/dashboard_router_tests.rs",
+        "rustfmt --edition 2021 --check crates/ccusage-core/src/dashboard/*.rs crates/ccusage-core/tests/dashboard_router_tests.rs",
         "cargo test --locked -p ccusage-core --test dashboard_router_tests",
         "cargo clippy --locked -p ccusage-core --all-targets -- -D warnings"
       ]
@@ -407,11 +287,11 @@
         "tmp/cargo-target/rust-11-cli-binary"
       ],
       "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-11-cli-binary cargo test --locked -p ccusage-cli --test cli_tests exit 0.",
+        "rustfmt --edition 2021 --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-11-cli-binary cargo test --locked -p ccusage-cli --test cli_tests exit 0.",
         "All CLI subcommand, exit-code (0..5), CCUSAGE_GAUGE_DESKTOP_EXECUTABLE override, and usage-snapshot parity tests pass."
       ],
       "verification": [
-        "rustfmt --check crates/ccusage-cli/src/*.rs crates/ccusage-cli/tests/cli_tests.rs",
+        "rustfmt --edition 2021 --check crates/ccusage-cli/src/*.rs crates/ccusage-cli/tests/cli_tests.rs",
         "CARGO_TARGET_DIR=tmp/cargo-target/rust-11-cli-binary cargo test --locked -p ccusage-cli --test cli_tests"
       ]
     },
@@ -441,11 +321,11 @@
         "tmp/cargo-target/rust-12-tauri-tray-app"
       ],
       "acceptanceCriteria": [
-        "rustfmt --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-12-tauri-tray-app cargo test --locked -p ccusage-gauge-app --test ipc_and_menu_tests exit 0.",
+        "rustfmt --edition 2021 --check and CARGO_TARGET_DIR=tmp/cargo-target/rust-12-tauri-tray-app cargo test --locked -p ccusage-gauge-app --test ipc_and_menu_tests exit 0.",
         "src-tauri/src/bridge.rs is removed and all in-process dashboard_request IPC, native tray menu/title/tooltip, internal dialog validation, dashboardAutostart/--dashboard-only lifecycle, and macOS Launch at Login tests pass."
       ],
       "verification": [
-        "rustfmt --check src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/ipc.rs src-tauri/src/tray_menu.rs src-tauri/src/dialogs.rs src-tauri/src/launch_at_login.rs src-tauri/tests/ipc_and_menu_tests.rs",
+        "rustfmt --edition 2021 --check src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/ipc.rs src-tauri/src/tray_menu.rs src-tauri/src/dialogs.rs src-tauri/src/launch_at_login.rs src-tauri/tests/ipc_and_menu_tests.rs",
         "CARGO_TARGET_DIR=tmp/cargo-target/rust-12-tauri-tray-app cargo test --locked -p ccusage-gauge-app --test ipc_and_menu_tests"
       ]
     },

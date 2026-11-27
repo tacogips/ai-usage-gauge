@@ -85,7 +85,7 @@ Existing Swift references to imitate:
 ## Verification Commands and Acceptance Criteria
 
 ```bash
-rustfmt --check src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/ipc.rs src-tauri/src/tray_menu.rs src-tauri/src/dialogs.rs src-tauri/src/launch_at_login.rs src-tauri/tests/ipc_and_menu_tests.rs
+rustfmt --edition 2021 --check src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/ipc.rs src-tauri/src/tray_menu.rs src-tauri/src/dialogs.rs src-tauri/src/launch_at_login.rs src-tauri/tests/ipc_and_menu_tests.rs
 CARGO_TARGET_DIR=tmp/cargo-target/rust-12-tauri-tray-app cargo test --locked -p ccusage-gauge-app --test ipc_and_menu_tests
 ```
 
@@ -95,6 +95,10 @@ Done when both commands exit `0`, `src-tauri/src/bridge.rs` is removed, and all 
 
 - **Authorized Cargo artifact root**: `tmp/cargo-target/rust-12-tauri-tray-app` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 5 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-12-tauri-tray-app`) with zero intra-wave path overlap or target lock contention.
 - **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
+
+## Amendment 2026-11-27 (blocked-wave-scope-or-contract, round 2)
+
+- **Workspace edition on standalone `rustfmt` gate**: Updated verification command to `rustfmt --edition 2021 --check src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/ipc.rs src-tauri/src/tray_menu.rs src-tauri/src/dialogs.rs src-tauri/src/launch_at_login.rs src-tauri/tests/ipc_and_menu_tests.rs` matching `[workspace.package] edition = "2021"` so `async` IPC and polling code is parsed cleanly.
 
 ## Progress Log
 

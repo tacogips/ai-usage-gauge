@@ -75,7 +75,7 @@ Existing Swift references to imitate:
 ## Verification Commands and Acceptance Criteria
 
 ```bash
-rustfmt --check crates/ccusage-core/src/pricing/*.rs crates/ccusage-core/tests/pricing_tests.rs
+rustfmt --edition 2021 --check crates/ccusage-core/src/pricing/*.rs crates/ccusage-core/tests/pricing_tests.rs
 CARGO_TARGET_DIR=tmp/cargo-target/rust-04-pricing-engine cargo test --locked -p ccusage-core --test pricing_tests
 ```
 
@@ -86,6 +86,28 @@ Done when both commands exit `0` and all pricing test cases pass with zero netwo
 - **Authorized Cargo artifact root**: `tmp/cargo-target/rust-04-pricing-engine` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 2 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-04-pricing-engine`) with zero intra-wave path overlap or target lock contention.
 - **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
 
+## Amendment 2026-11-27 (blocked-wave-scope-or-contract, round 2)
+
+- **Workspace edition on standalone `rustfmt` gate**: Standalone `rustfmt` defaults to Rust 2015 without a repository `rustfmt.toml` and rejects `async` syntax in `crates/ccusage-core/src/pricing/litellm_cache.rs` and `crates/ccusage-core/tests/pricing_tests.rs`. Amended the verification gate to `rustfmt --edition 2021 --check crates/ccusage-core/src/pricing/*.rs crates/ccusage-core/tests/pricing_tests.rs` matching `[workspace.package] edition = "2021"` in `Cargo.toml`, keeping Wave 2 plans parallel with zero extra root write paths.
+
 ## Progress Log
 
 Record progress in a dedicated worker progress note; read each target file fresh before editing, capture pre/post content hashes to detect unexpected drift, never modify `impl-plans/active/` or run concurrent git operations, and keep all edits strictly within `writePaths`.
+
+### Implementation progress (2026-11-27)
+
+Implemented the pricing module, injectable asynchronous LiteLLM refresh and atomic cache, built-in model rates, decimal token buckets, and Antigravity effective-date schedules. Added offline integration tests in `crates/ccusage-core/tests/pricing_tests.rs`. Final formatting and locked test results are recorded in `tmp/rust-tauri-migration-20261126/rust-04-pricing-engine/`; independent integrity and adversarial reviews remain downstream.
+
+Verification pending: the prescribed bare `rustfmt --check` parses as Rust 2015 and rejects async syntax; `rustfmt --edition 2021 --check` passes. The locked offline pricing test currently fails to compile sibling `remote/mutation_owner.rs` and `cache/aggregation_cache.rs` before running tests. Re-run both prescribed gates after the sibling compile failures and formatter edition configuration are resolved; no test acceptance is claimed.
+
+### Verification rerun (2026-11-27)
+
+The locked pricing integration tests now pass offline (3 passed, 0 failed); the previously reported sibling compilation failures did not recur. The exact bare `rustfmt --check` still fails because standalone rustfmt defaults to Rust 2015 and cannot parse the required async implementation; the same check with `--edition 2021` passes. The exact formatting acceptance remains blocked pending an authorized repository formatter edition configuration or an amended verification command. Logs are in `tmp/rust-tauri-migration-20261126/rust-04-pricing-engine/`. Formal reviews and workflow finalization remain downstream.
+
+### Current verification (2026-11-27)
+
+Offline locked pricing tests passed again (3 passed, 0 failed; `step6-cargo-final.log`). The exact standalone rustfmt gate failed on Rust 2015 parsing of async syntax (`step6-rustfmt-final2.log`); completion remains blocked until the command is amended to specify the workspace edition or an authorized formatter configuration is provided. Independent reviews and finalization remain downstream.
+
+### Current shared-tree verification rerun (2026-11-27)
+
+The locked offline pricing tests passed (3 passed, 0 failed; `step6-current-test.log`). The exact standalone `rustfmt --check` failed because it parses async syntax as Rust 2015 (`step6-current-rustfmt.log`); the same check with `--edition 2021` passed (`step6-current-rustfmt-edition.log`). The exact acceptance gate requires an amended command or an authorized formatter configuration covering both source and tests. Independent review and workflow finalization remain downstream.

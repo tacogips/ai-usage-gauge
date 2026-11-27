@@ -68,7 +68,7 @@ Existing Swift references to imitate:
 ## Verification Commands and Acceptance Criteria
 
 ```bash
-rustfmt --check crates/ccusage-cli/src/*.rs crates/ccusage-cli/tests/cli_tests.rs
+rustfmt --edition 2021 --check crates/ccusage-cli/src/*.rs crates/ccusage-cli/tests/cli_tests.rs
 CARGO_TARGET_DIR=tmp/cargo-target/rust-11-cli-binary cargo test --locked -p ccusage-cli --test cli_tests
 ```
 
@@ -78,6 +78,10 @@ Done when both commands exit `0` and all CLI subcommand, exit-code, launcher ove
 
 - **Authorized Cargo artifact root**: `tmp/cargo-target/rust-11-cli-binary` (added to `writePaths` and `artifactRoots`, gitignored via `tmp/`) isolates this parallel Wave 5 plan's Cargo build output (`CARGO_TARGET_DIR=tmp/cargo-target/rust-11-cli-binary`) with zero intra-wave path overlap or target lock contention.
 - **Cargo cache & temp scratch authority**: Read/lock-only access to Wave 1's populated Cargo cache (`${CARGO_HOME:-$HOME/.cargo}`, or `CARGO_HOME=tmp/cargo-home` if `tmp/cargo-home` was created by `rust-01`) under `--locked` with zero new dependency downloads; OS `$TMPDIR` (`tempfile`) authorized for test fixtures. Never stage or commit `tmp/`.
+
+## Amendment 2026-11-27 (blocked-wave-scope-or-contract, round 2)
+
+- **Workspace edition on standalone `rustfmt` gate**: Updated verification command to `rustfmt --edition 2021 --check crates/ccusage-cli/src/*.rs crates/ccusage-cli/tests/cli_tests.rs` matching `[workspace.package] edition = "2021"` so `async` CLI runtime code is parsed cleanly.
 
 ## Progress Log
 
