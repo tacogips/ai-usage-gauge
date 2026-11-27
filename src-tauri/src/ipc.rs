@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use ccusage_core::dashboard::{MachineDashboardRouter, RouterRequest};
+use ai_usage_core::dashboard::{MachineDashboardRouter, RouterRequest};
 
 pub const MAX_IPC_BODY_BYTES: usize = 1_048_576;
 

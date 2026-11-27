@@ -1,4 +1,4 @@
-const storageKey = "ccusage-gauge-collapsed-sections";
+const storageKey = "ai-usage-gauge-collapsed-sections";
 type SectionStorage = Pick<Storage, "getItem" | "setItem">;
 
 function defaultStorage(): SectionStorage | undefined {

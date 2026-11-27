@@ -1,5 +1,5 @@
-use ccusage_core::types::{MenuBarStatusEntry, PieChartId};
-use ccusage_gauge_app::tray_icons::{TrayIconRenderer, TrayPresentationDedup, TrayRenderState};
+use ai_usage_core::types::{MenuBarStatusEntry, PieChartId};
+use ai_usage_gauge_app::tray_icons::{TrayIconRenderer, TrayPresentationDedup, TrayRenderState};
 fn entry(id: PieChartId, fraction: Option<f64>) -> MenuBarStatusEntry {
     MenuBarStatusEntry {
         id,

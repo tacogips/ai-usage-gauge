@@ -6,32 +6,34 @@ use std::time::Duration;
 use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::Tz;
 use tauri::image::Image;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WindowEvent};
+use tokio::sync::Notify;
 
-use ccusage_core::aggregation::collector::{
+use ai_usage_core::aggregation::collector::{
     FetchFuture, MachineCollector, MachineSnapshotFetcher, MachineSnapshotStore,
 };
-use ccusage_core::aggregation::snapshot_service::SnapshotService;
-use ccusage_core::cache::DashboardDirectoryNameStore;
-use ccusage_core::config::{BootstrapLogger, ConfigStore};
-use ccusage_core::dashboard::MachineDashboardRouter;
-use ccusage_core::paths::AppPaths;
-use ccusage_core::pricing::PricingEngine;
-use ccusage_core::rate_limits::service::RateLimitUsageService;
-use ccusage_core::remote::registry::MachineRegistryStore;
-use ccusage_core::state::StateStore;
-use ccusage_core::types::{
+use ai_usage_core::aggregation::snapshot_service::SnapshotService;
+use ai_usage_core::cache::DashboardDirectoryNameStore;
+use ai_usage_core::config::{BootstrapLogger, ConfigStore};
+use ai_usage_core::dashboard::MachineDashboardRouter;
+use ai_usage_core::paths::AppPaths;
+use ai_usage_core::pricing::PricingEngine;
+use ai_usage_core::rate_limits::service::RateLimitUsageService;
+use ai_usage_core::remote::registry::MachineRegistryStore;
+use ai_usage_core::state::StateStore;
+use ai_usage_core::types::{
     AppConfiguration, AppState, DirectoryNameLifecycle, MachineDescriptor, MachineKind,
-    MachineRegistry, MachineRuntimeReconciler, ResetCycle, SanitizedCollectionError,
+    MachineRegistry, MachineRuntimeReconciler, PieChartId, RateLimitProvider, ResetCycle,
+    SanitizedCollectionError,
 };
 
-use ccusage_gauge_app::dialogs::render_dialog_html;
-use ccusage_gauge_app::ipc::{dispatch_ipc_request, DashboardIpcRequest, DashboardIpcResponse};
-use ccusage_gauge_app::launch_at_login::{LaunchAtLoginController, LaunchAtLoginState};
-use ccusage_gauge_app::tray_icons::{TrayIconRenderer, TrayPresentationDedup};
-use ccusage_gauge_app::tray_menu::TrayViewModel;
+use ai_usage_gauge_app::dialogs::render_dialog_html;
+use ai_usage_gauge_app::ipc::{dispatch_ipc_request, DashboardIpcRequest, DashboardIpcResponse};
+use ai_usage_gauge_app::launch_at_login::{LaunchAtLoginController, LaunchAtLoginState};
+use ai_usage_gauge_app::tray_icons::{TrayIconRenderer, TrayPresentationDedup};
+use ai_usage_gauge_app::tray_menu::TrayViewModel;
 
 struct AppRuntime {
     router: Arc<MachineDashboardRouter>,
@@ -122,7 +124,10 @@ fn default_cycle_from_term(term: &str) -> ResetCycle {
 }
 
 fn antigravity_root_from_env(env: &HashMap<String, String>) -> Option<PathBuf> {
-    if let Some(p) = env.get("CCUSAGE_GAUGE_ANTIGRAVITY_DIR") {
+    if let Some(p) = env
+        .get("AI_USAGE_GAUGE_ANTIGRAVITY_DIR")
+        .or_else(|| env.get("CCUSAGE_GAUGE_ANTIGRAVITY_DIR"))
+    {
         let trimmed = p.trim();
         if trimmed.is_empty() {
             return None;
@@ -134,10 +139,11 @@ fn antigravity_root_from_env(env: &HashMap<String, String>) -> Option<PathBuf> {
 }
 
 fn build_runtime(paths: &AppPaths) -> Result<Arc<AppRuntime>, String> {
+    paths.migrate_legacy_if_needed();
     let logger = BootstrapLogger::new(
         paths.log_dir.clone(),
         None,
-        "ccusage-gauge-app",
+        "ai-usage-gauge-app",
         Utc::now,
         5 * 1024 * 1024,
         Duration::from_secs(7 * 86_400),
@@ -251,7 +257,7 @@ fn main() {
     let runtime_for_setup = runtime.clone();
 
     tauri::Builder::default()
-        .register_uri_scheme_protocol("ccusage-dialog", |_ctx, req| {
+        .register_uri_scheme_protocol("ai-usage-dialog", |_ctx, req| {
             let dialog = req.uri().path().trim_start_matches('/');
             let (ct, html) = render_dialog_html(dialog);
             tauri::http::Response::builder()
@@ -297,10 +303,84 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![dashboard_request])
         .run(tauri::generate_context!())
-        .expect("Unable to run CCUsage Gauge");
+        .expect("Unable to run AI Usage Gauge");
+}
+
+fn pie_chart_id_key(id: PieChartId) -> &'static str {
+    match id {
+        PieChartId::Budget => "budget",
+        PieChartId::Claude5h => "claude5h",
+        PieChartId::ClaudeWeekly => "claudeWeekly",
+        PieChartId::ClaudeCredit => "claudeCredit",
+        PieChartId::Codex5h => "codex5h",
+        PieChartId::CodexWeekly => "codexWeekly",
+        PieChartId::CodexCredit => "codexCredit",
+        PieChartId::Gemini5h => "gemini5h",
+        PieChartId::GeminiWeekly => "geminiWeekly",
+    }
+}
+
+fn pie_chart_from_key(key: &str) -> Option<PieChartId> {
+    match key {
+        "budget" => Some(PieChartId::Budget),
+        "claude5h" => Some(PieChartId::Claude5h),
+        "claudeWeekly" => Some(PieChartId::ClaudeWeekly),
+        "codex5h" => Some(PieChartId::Codex5h),
+        "codexWeekly" => Some(PieChartId::CodexWeekly),
+        "gemini5h" => Some(PieChartId::Gemini5h),
+        "geminiWeekly" => Some(PieChartId::GeminiWeekly),
+        _ => None,
+    }
+}
+
+fn pie_chart_menu_label(id: PieChartId) -> &'static str {
+    match id {
+        PieChartId::Budget => "Budget",
+        PieChartId::Claude5h => "Claude Code 5h",
+        PieChartId::ClaudeWeekly => "Claude Code weekly",
+        PieChartId::ClaudeCredit => "Claude Code credit",
+        PieChartId::Codex5h => "Codex 5h",
+        PieChartId::CodexWeekly => "Codex weekly",
+        PieChartId::CodexCredit => "Codex credit",
+        PieChartId::Gemini5h => "Gemini 5h",
+        PieChartId::GeminiWeekly => "Gemini weekly",
+    }
+}
+
+fn format_provider_line(
+    rl: Option<&ai_usage_core::types::RateLimitsResponse>,
+    provider: RateLimitProvider,
+    label: &str,
+) -> String {
+    let Some(p) = rl.and_then(|r| r.providers.iter().find(|p| p.provider == provider)) else {
+        return format!("{label}: unavailable");
+    };
+    let mut parts = Vec::new();
+    if let Some(w) = &p.five_hour {
+        parts.push(format!("5h {:.0}%", w.used_percent));
+    }
+    if let Some(w) = &p.weekly {
+        parts.push(format!("Weekly {:.0}%", w.used_percent));
+    }
+    if let Some(c) = &p.credits {
+        if c.enabled {
+            if let Some(pct) = c.used_percent {
+                parts.push(format!("Credit {:.0}%", pct));
+            } else if let Some(bal) = c.balance {
+                parts.push(format!("Credit {:.0}", bal));
+            }
+        }
+    }
+    if parts.is_empty() {
+        format!("{label}: {:?}", p.status)
+    } else {
+        format!("{label}: {}", parts.join(" | "))
+    }
 }
 
 fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<()> {
+    let initial_state = runtime.router.state.blocking_read().clone();
+
     let summary_item = MenuItem::with_id(
         app,
         "budget_summary",
@@ -308,6 +388,120 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
         false,
         None::<&str>,
     )?;
+    let claude_item = MenuItem::with_id(
+        app,
+        "provider_claude",
+        "Claude Code: loading...",
+        false,
+        None::<&str>,
+    )?;
+    let codex_item = MenuItem::with_id(
+        app,
+        "provider_codex",
+        "Codex: loading...",
+        false,
+        None::<&str>,
+    )?;
+    let gemini_item = MenuItem::with_id(
+        app,
+        "provider_gemini",
+        "Gemini: loading...",
+        false,
+        None::<&str>,
+    )?;
+
+    // Usage icons submenu: Budget + Claude/Codex/Gemini 5h & weekly meters.
+    let checked_icons = initial_state.menu_bar_pie_charts.len();
+    let mut icon_check_items: Vec<(PieChartId, CheckMenuItem<tauri::Wry>)> = Vec::new();
+    for id in PieChartId::menu_bar_cases() {
+        let checked = initial_state.menu_bar_pie_charts.contains(&id);
+        let enabled = !(checked && checked_icons <= 1);
+        let item = CheckMenuItem::with_id(
+            app,
+            format!("icon:{}", pie_chart_id_key(id)),
+            pie_chart_menu_label(id),
+            enabled,
+            checked,
+            None::<&str>,
+        )?;
+        icon_check_items.push((id, item));
+    }
+    let icon_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = icon_check_items
+        .iter()
+        .map(|(_, item)| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+        .collect();
+    let usage_icons_submenu = Submenu::with_items(app, "Usage icons", true, &icon_refs)?;
+
+    // Ratio text submenu: Cost (USD) + per-vendor percentage labels beside icons.
+    let ratio_cost_item = CheckMenuItem::with_id(
+        app,
+        "ratio:cost",
+        "Cost (USD)",
+        true,
+        initial_state.menu_bar_show_cost,
+        None::<&str>,
+    )?;
+    let ratio_sep = PredefinedMenuItem::separator(app)?;
+    let mut ratio_check_items: Vec<(PieChartId, CheckMenuItem<tauri::Wry>)> = Vec::new();
+    for id in PieChartId::menu_bar_cases() {
+        let checked = initial_state.menu_bar_ratio_labels.contains(&id);
+        let item = CheckMenuItem::with_id(
+            app,
+            format!("ratio:{}", pie_chart_id_key(id)),
+            format!("{} %", pie_chart_menu_label(id)),
+            true,
+            checked,
+            None::<&str>,
+        )?;
+        ratio_check_items.push((id, item));
+    }
+    let mut ratio_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        vec![&ratio_cost_item, &ratio_sep];
+    for (_, item) in &ratio_check_items {
+        ratio_refs.push(item);
+    }
+    let ratio_text_submenu = Submenu::with_items(app, "Ratio text", true, &ratio_refs)?;
+
+    // Aggregation period submenu.
+    let cycle_hourly = CheckMenuItem::with_id(
+        app,
+        "cycle:hourly",
+        "Hourly",
+        true,
+        matches!(initial_state.reset_cycle, ResetCycle::Hourly),
+        None::<&str>,
+    )?;
+    let cycle_daily = CheckMenuItem::with_id(
+        app,
+        "cycle:daily",
+        "Daily",
+        true,
+        matches!(initial_state.reset_cycle, ResetCycle::Daily),
+        None::<&str>,
+    )?;
+    let cycle_weekly = CheckMenuItem::with_id(
+        app,
+        "cycle:weekly",
+        "Weekly",
+        true,
+        matches!(initial_state.reset_cycle, ResetCycle::Weekly),
+        None::<&str>,
+    )?;
+    let cycle_monthly = CheckMenuItem::with_id(
+        app,
+        "cycle:monthly",
+        "Monthly",
+        true,
+        matches!(initial_state.reset_cycle, ResetCycle::Monthly),
+        None::<&str>,
+    )?;
+    let cycle_submenu = Submenu::with_items(
+        app,
+        "Aggregation period",
+        true,
+        &[&cycle_hourly, &cycle_daily, &cycle_weekly, &cycle_monthly],
+    )?;
+
     let toggle_dash = MenuItem::with_id(
         app,
         "toggle_dashboard",
@@ -328,22 +522,29 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
+    let sep3 = PredefinedMenuItem::separator(app)?;
 
     let menu = Menu::with_items(
         app,
         &[
             &summary_item,
+            &claude_item,
+            &codex_item,
+            &gemini_item,
             &sep1,
+            &usage_icons_submenu,
+            &ratio_text_submenu,
+            &cycle_submenu,
+            &sep2,
             &toggle_dash,
             &refresh_item,
             &launch_item,
-            &sep2,
+            &sep3,
             &quit_item,
         ],
     )?;
 
     let renderer = TrayIconRenderer::new();
-    let initial_state = runtime.router.state.blocking_read().clone();
     let initial_vm = TrayViewModel::build(
         &initial_state,
         None,
@@ -363,52 +564,182 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
         tray_builder = tray_builder.icon(Image::new_owned(r.rgba, r.width, r.height));
     }
 
+    let wake_render = Arc::new(Notify::new());
+    let wake_refresh = Arc::new(Notify::new());
+
     let rt_menu = runtime.clone();
+    let wake_render_menu = wake_render.clone();
+    let wake_refresh_menu = wake_refresh.clone();
+    let icon_items_menu = icon_check_items.clone();
+    let ratio_items_menu = ratio_check_items.clone();
+    let ratio_cost_menu = ratio_cost_item.clone();
+    let cycle_items_menu = (
+        cycle_hourly.clone(),
+        cycle_daily.clone(),
+        cycle_weekly.clone(),
+        cycle_monthly.clone(),
+    );
+
     let tray = tray_builder
-        .on_menu_event(move |app_handle, event| match event.id().as_ref() {
-            "toggle_dashboard" => {
-                if let Some(win) = app_handle.get_webview_window("main") {
-                    if win.is_visible().unwrap_or(false) {
-                        let _ = win.hide();
-                    } else {
-                        let _ = win.show();
-                        let _ = win.set_focus();
-                    }
+        .on_menu_event(move |app_handle, event| {
+            let id_str = event.id().as_ref();
+            if let Some(key) = id_str.strip_prefix("icon:") {
+                if let Some(chart_id) = pie_chart_from_key(key) {
+                    let rt = rt_menu.clone();
+                    let wake = wake_render_menu.clone();
+                    let items = icon_items_menu.clone();
+                    let handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let updated = {
+                            let mut st = rt.router.state.write().await;
+                            if st.menu_bar_pie_charts.contains(&chart_id) {
+                                if st.menu_bar_pie_charts.len() > 1 {
+                                    st.menu_bar_pie_charts.retain(|x| *x != chart_id);
+                                }
+                            } else {
+                                st.menu_bar_pie_charts.push(chart_id);
+                                st.menu_bar_pie_charts.sort_by_key(|x| {
+                                    PieChartId::ALL.iter().position(|p| p == x).unwrap_or(99)
+                                });
+                            }
+                            st.menu_bar_cost_only = false;
+                            let _ = rt.state_store.save(&st);
+                            st.menu_bar_pie_charts.clone()
+                        };
+                        let count = updated.len();
+                        let _ = handle.run_on_main_thread(move || {
+                            for (cid, item) in &items {
+                                let checked = updated.contains(cid);
+                                let _ = item.set_checked(checked);
+                                let _ = item.set_enabled(!(checked && count <= 1));
+                            }
+                        });
+                        wake.notify_one();
+                    });
                 }
+                return;
             }
-            "refresh" => {
-                let col = rt_menu.collector.clone();
+            if id_str == "ratio:cost" {
+                let rt = rt_menu.clone();
+                let wake = wake_render_menu.clone();
+                let item = ratio_cost_menu.clone();
+                let handle = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    col.refresh_all(None, Utc::now()).await;
+                    let show_cost = {
+                        let mut st = rt.router.state.write().await;
+                        st.menu_bar_show_cost = !st.menu_bar_show_cost;
+                        let _ = rt.state_store.save(&st);
+                        st.menu_bar_show_cost
+                    };
+                    let _ = handle.run_on_main_thread(move || {
+                        let _ = item.set_checked(show_cost);
+                    });
+                    wake.notify_one();
                 });
+                return;
             }
-            "launch_at_login" => {
-                let next = LaunchAtLoginController::status() != LaunchAtLoginState::On;
-                let _ = LaunchAtLoginController::set_enabled(next);
+            if let Some(key) = id_str.strip_prefix("ratio:") {
+                if let Some(chart_id) = pie_chart_from_key(key) {
+                    let rt = rt_menu.clone();
+                    let wake = wake_render_menu.clone();
+                    let items = ratio_items_menu.clone();
+                    let handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let labels = {
+                            let mut st = rt.router.state.write().await;
+                            if st.menu_bar_ratio_labels.contains(&chart_id) {
+                                st.menu_bar_ratio_labels.retain(|x| *x != chart_id);
+                            } else {
+                                st.menu_bar_ratio_labels.push(chart_id);
+                            }
+                            let _ = rt.state_store.save(&st);
+                            st.menu_bar_ratio_labels.clone()
+                        };
+                        let _ = handle.run_on_main_thread(move || {
+                            for (cid, item) in &items {
+                                let _ = item.set_checked(labels.contains(cid));
+                            }
+                        });
+                        wake.notify_one();
+                    });
+                }
+                return;
             }
-            "quit" => {
-                app_handle.exit(0);
+            if let Some(key) = id_str.strip_prefix("cycle:") {
+                let next_cycle = match key {
+                    "hourly" => Some(ResetCycle::Hourly),
+                    "daily" => Some(ResetCycle::Daily),
+                    "weekly" => Some(ResetCycle::Weekly),
+                    "monthly" => Some(ResetCycle::Monthly),
+                    _ => None,
+                };
+                if let Some(cycle) = next_cycle {
+                    let rt = rt_menu.clone();
+                    let wake = wake_render_menu.clone();
+                    let (ch, cd, cw, cm) = cycle_items_menu.clone();
+                    let handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        {
+                            let mut st = rt.router.state.write().await;
+                            st.reset_cycle = cycle.clone();
+                            let _ = rt.state_store.save(&st);
+                        }
+                        let _ = handle.run_on_main_thread(move || {
+                            let _ = ch.set_checked(matches!(cycle, ResetCycle::Hourly));
+                            let _ = cd.set_checked(matches!(cycle, ResetCycle::Daily));
+                            let _ = cw.set_checked(matches!(cycle, ResetCycle::Weekly));
+                            let _ = cm.set_checked(matches!(cycle, ResetCycle::Monthly));
+                        });
+                        wake.notify_one();
+                    });
+                }
+                return;
             }
-            _ => {}
+            match id_str {
+                "toggle_dashboard" => {
+                    if let Some(win) = app_handle.get_webview_window("main") {
+                        if win.is_visible().unwrap_or(false) {
+                            let _ = win.hide();
+                        } else {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                    wake_render_menu.notify_one();
+                }
+                "refresh" => {
+                    wake_refresh_menu.notify_one();
+                }
+                "launch_at_login" => {
+                    let next = LaunchAtLoginController::status() != LaunchAtLoginState::On;
+                    let _ = LaunchAtLoginController::set_enabled(next);
+                }
+                "quit" => {
+                    app_handle.exit(0);
+                }
+                _ => {}
+            }
         })
         .build(app)?;
 
     let handle = app.handle().clone();
     let poll_secs = runtime.config.poll_interval_seconds.max(5);
-    let _state_store_ref = &runtime.state_store;
     tauri::async_runtime::spawn(async move {
         let mut dedup = TrayPresentationDedup::default();
         let renderer = TrayIconRenderer::new();
+        let mut need_collect = true;
         loop {
             let now = Utc::now();
-            runtime.collector.refresh_all(None, now).await;
+            if need_collect {
+                runtime.collector.refresh_all(None, now).await;
+            }
             let state = runtime.router.state.read().await.clone();
             let merged = runtime
                 .collector
                 .merged_snapshot(
                     &state,
                     "all",
-                    ccusage_core::types::DashboardDataDisposition::Current,
+                    ai_usage_core::types::DashboardDataDisposition::Current,
                     now,
                     runtime.tz,
                 )
@@ -430,12 +761,20 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
                 runtime.config.poll_interval_seconds,
                 LaunchAtLoginController::status() == LaunchAtLoginState::RequiresApproval,
             );
+            let claude_line =
+                format_provider_line(rl.as_ref(), RateLimitProvider::Claude, "Claude Code");
+            let codex_line = format_provider_line(rl.as_ref(), RateLimitProvider::Codex, "Codex");
+            let gemini_line =
+                format_provider_line(rl.as_ref(), RateLimitProvider::Gemini, "Gemini");
 
             let update_icon = dedup.update_icon(&vm.render_state);
             let update_title = dedup.update_title(&vm.status_title);
             let update_tooltip = dedup.update_tooltip(&vm.tooltip);
             let tray_ref = tray.clone();
             let summary_ref = summary_item.clone();
+            let claude_ref = claude_item.clone();
+            let codex_ref = codex_item.clone();
+            let gemini_ref = gemini_item.clone();
             let toggle_ref = toggle_dash.clone();
             let rendered_opt = if update_icon {
                 renderer.render_strip(&vm.render_state)
@@ -454,10 +793,23 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
                     let _ = tray_ref.set_tooltip(Some(&vm.tooltip));
                 }
                 let _ = summary_ref.set_text(&vm.budget_summary_line);
+                let _ = claude_ref.set_text(&claude_line);
+                let _ = codex_ref.set_text(&codex_line);
+                let _ = gemini_ref.set_text(&gemini_line);
                 let _ = toggle_ref.set_text(&vm.dashboard_toggle_label);
             });
 
-            tokio::time::sleep(Duration::from_secs(u64::from(poll_secs))).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(u64::from(poll_secs))) => {
+                    need_collect = true;
+                }
+                _ = wake_refresh.notified() => {
+                    need_collect = true;
+                }
+                _ = wake_render.notified() => {
+                    need_collect = false;
+                }
+            }
         }
     });
 

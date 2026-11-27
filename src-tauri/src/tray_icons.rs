@@ -1,5 +1,5 @@
 //! Platform-independent template tray artwork.
-use ccusage_core::types::{MenuBarStatusEntry, PieChartId, RateLimitProvider};
+use ai_usage_core::types::{MenuBarStatusEntry, PieChartId, RateLimitProvider};
 use std::io::Cursor;
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
 const N: usize = 36;

@@ -1,7 +1,7 @@
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
-use ccusage_core::types::{
+use ai_usage_core::types::{
     AppState, CostSnapshot, MenuBarStatusEntry, PieChartId, RateLimitProvider, RateLimitsResponse,
 };
 
@@ -69,24 +69,28 @@ impl TrayViewModel {
         let is_budget_unknown = snapshot.is_none() && !is_budget_unset;
 
         let mut entries = Vec::new();
-        for id in &state.menu_bar_pie_charts {
+        for id in PieChartId::menu_bar_cases() {
+            let show_icon = !state.menu_bar_cost_only && state.menu_bar_pie_charts.contains(&id);
+            let show_ratio = state.menu_bar_ratio_labels.contains(&id);
+            if !show_icon && !show_ratio {
+                continue;
+            }
             let fraction = match id {
                 PieChartId::Budget => budget_fraction,
-                _ => rate_limit_fraction(rate_limits, *id),
+                _ => rate_limit_fraction(rate_limits, id),
             };
-            let show_ratio = state.menu_bar_ratio_labels.contains(id);
             let ratio_label = if show_ratio {
                 fraction.map(|f| format!("{}%", (f * 100.0).round() as i64))
             } else {
                 None
             };
             entries.push(MenuBarStatusEntry {
-                id: *id,
+                id,
                 fraction,
-                show_icon: !state.menu_bar_cost_only,
+                show_icon,
                 ratio_label,
-                is_budget_unset: *id == PieChartId::Budget && is_budget_unset,
-                is_budget_unknown: *id == PieChartId::Budget && is_budget_unknown,
+                is_budget_unset: id == PieChartId::Budget && is_budget_unset,
+                is_budget_unknown: id == PieChartId::Budget && is_budget_unknown,
             });
         }
 
@@ -132,9 +136,9 @@ impl TrayViewModel {
         }
 
         let tooltip = if let Some(err) = error_message {
-            format!("CCUsage Gauge — Warning: {err}")
+            format!("AI Usage Gauge — Warning: {err}")
         } else {
-            let mut lines = vec![format!("CCUsage Gauge — {budget_summary_line}")];
+            let mut lines = vec![format!("AI Usage Gauge — {budget_summary_line}")];
             lines.extend(rate_limit_lines.iter().cloned());
             lines.extend(credit_lines);
             lines.join("\n")

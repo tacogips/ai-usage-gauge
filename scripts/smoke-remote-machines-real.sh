@@ -3,9 +3,9 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="$root/deploy/emulation/compose.yaml"
-project="ccusage-gauge-real-$$"
-run="$(mktemp -d "${TMPDIR:-/tmp}/ccusage-gauge-real.XXXXXX")"
-manifest="$(mktemp "${TMPDIR:-/tmp}/ccusage-gauge-manifest.XXXXXX")"
+project="ai-usage-gauge-real-$$"
+run="$(mktemp -d "${TMPDIR:-/tmp}/ai-usage-gauge-real.XXXXXX")"
+manifest="$(mktemp "${TMPDIR:-/tmp}/ai-usage-gauge-manifest.XXXXXX")"
 day="${CCUSAGE_SMOKE_UTC_DAY:-2026-07-16}"
 source="${CLAUDE_CONFIG_DIR:-${HOME:?HOME is required}/.claude}"
 fail() { printf 'real smoke failed: %s\n' "$1" >&2; exit 1; }
@@ -43,7 +43,7 @@ cleanup() {
   docker ps -a --format '{{.Names}}' | awk -v prefix="${project}-" 'index($0, prefix) == 1 { found=1 } END { exit !found }' && status=1 || true
   docker volume ls --format '{{.Name}}' | awk -v prefix="${project}_" 'index($0, prefix) == 1 { found=1 } END { exit !found }' && status=1 || true
   docker images --format '{{.Repository}}' | awk -v prefix="${project}-" 'index($0, prefix) == 1 { found=1 } END { exit !found }' && status=1 || true
-  current="$(mktemp "${TMPDIR:-/tmp}/ccusage-gauge-current.XXXXXX")"; snapshot "$current" || status=1
+  current="$(mktemp "${TMPDIR:-/tmp}/ai-usage-gauge-current.XXXXXX")"; snapshot "$current" || status=1
   cmp -s "$manifest" "$current" || status=1
   chmod -R u+w "$run" 2>/dev/null || status=1
   rm -f "$current" "$manifest"
@@ -121,14 +121,14 @@ register_machine() {
   local id="$1" port
   port="$("${compose[@]}" port "$id" 22 | awk -F: 'NR == 1 { print $NF }')"
   test -n "$port"
-  "${compose[@]}" exec -T collector curl --fail-with-body --silent --show-error -H 'Content-Type: application/json' -H 'X-CCUsage-Gauge-Mutation: 1' \
+  "${compose[@]}" exec -T collector curl --fail-with-body --silent --show-error -H 'Content-Type: application/json' -H 'X-AI-Usage-Gauge-Mutation: 1' \
     -X POST http://127.0.0.1:18081/api/machines \
     --data "{\"id\":\"$id\",\"displayName\":\"$id\",\"kind\":\"ssh\",\"enabled\":true,\"ssh\":{\"host\":\"host.docker.internal\",\"port\":$port,\"user\":\"ccusage\",\"identityFile\":\"/run/ccusage-secrets/id_ed25519\",\"extraOptions\":[\"-o ConnectTimeout=5\",\"-o StrictHostKeyChecking=accept-new\",\"-o UserKnownHostsFile=/run/ccusage-secrets/known_hosts\"],\"remoteCcusagePath\":\"ccusage\"}}" >/dev/null
 }
 register_machine machine-a
 register_machine machine-b
 "${compose[@]}" exec -T collector curl --fail-with-body --silent --show-error \
-  -H 'X-CCUsage-Gauge-Mutation: 1' \
+  -H 'X-AI-Usage-Gauge-Mutation: 1' \
   'http://127.0.0.1:18081/api/refresh?machine=all' >/dev/null
 python3 "$root/deploy/emulation/assert-real-parity.py" "$project" "$compose_file" "$day"
 scripts/smoke-packaged-assets.sh --layout all --expect-missing-diagnostics

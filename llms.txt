@@ -1,4 +1,4 @@
-# ccusage-gauge
+# ai-usage-gauge
 
 > Pure Rust and Tauri v2 macOS menu-bar app, native/browser dashboard, CLI, and local HTTP API that shows how much of your Claude Code, Codex (ChatGPT), and Gemini (Antigravity CLI) subscription limits you have used: the 5-hour and weekly windows as used/remaining percentages with reset countdowns, extra-usage credits, and token/API-equivalent cost history.
 
@@ -9,17 +9,17 @@ Key facts:
 - Token counts and API-equivalent cost are scanned and aggregated natively in Rust from local Claude Code JSONL logs, Codex JSONL logs, and Antigravity CLI transcripts (no local `ccusage` CLI installation required), broken down by model, agent, machine, and directory; remote machines are supported over SSH for cost data.
 - Menu bar: Claude, ChatGPT/Codex, and Gemini icons fill from bottom to top as usage rises; optional percentages; spend or budget progress; hover tooltip with credits.
 - Platforms: single-process Rust + Tauri v2 menu-bar and native dashboard app on macOS (Apple silicon and Intel); CLI and dashboard HTTP server on macOS and Linux.
-- Install: `brew install --cask tacogips/tap/ccusage-gauge`.
+- Install: `brew install --cask tacogips/tap/ai-usage-gauge`.
 - Credentials are sent only to the provider's usage endpoint and are never logged, stored, or returned.
 
 ## Docs
 
-- [README](https://github.com/tacogips/ccusage-gauge/blob/main/README.md): overview, FAQ, install, configuration
-- [Subscription usage and display controls](https://github.com/tacogips/ccusage-gauge/blob/main/README.md#subscription-usage-and-display-controls): data sources, refresh and throttling behavior, menu-bar and dashboard options, `GET /api/rate-limits` example
-- [Remote machines](https://github.com/tacogips/ccusage-gauge/blob/main/README.md#remote-machines): SSH collection of cost data
-- [Dashboard client commands](https://github.com/tacogips/ccusage-gauge/blob/main/README.md#dashboard-client-commands): CLI access to metrics
+- [README](https://github.com/tacogips/ai-usage-gauge/blob/main/README.md): overview, FAQ, install, configuration
+- [Subscription usage and display controls](https://github.com/tacogips/ai-usage-gauge/blob/main/README.md#subscription-usage-and-display-controls): data sources, refresh and throttling behavior, menu-bar and dashboard options, `GET /api/rate-limits` example
+- [Remote machines](https://github.com/tacogips/ai-usage-gauge/blob/main/README.md#remote-machines): SSH collection of cost data
+- [Dashboard client commands](https://github.com/tacogips/ai-usage-gauge/blob/main/README.md#dashboard-client-commands): CLI access to metrics
 
 ## Optional
 
-- [Releases](https://github.com/tacogips/ccusage-gauge/releases): Apple Silicon and Intel Formula archives and notarized DMGs
+- [Releases](https://github.com/tacogips/ai-usage-gauge/releases): Apple Silicon and Intel Formula archives and notarized DMGs
 - [Homebrew tap](https://github.com/tacogips/homebrew-tap): `tacogips/tap`

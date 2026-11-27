@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CCUsage Gauge",
+  "productName": "AI Usage Gauge",
   "version": "0.5.1",
-  "identifier": "com.tacogips.ccusage-gauge",
+  "identifier": "com.tacogips.ai-usage-gauge",
   "build": {
     "frontendDist": "../frontend/dist"
   },
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "CCUsage Gauge",
+        "title": "AI Usage Gauge",
         "width": 1480,
         "height": 920,
         "minWidth": 640,

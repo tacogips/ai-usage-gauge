@@ -253,7 +253,7 @@ export class DashboardRequestTimeoutError extends Error {
 
 export function mutationJSON<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  headers.set("X-CCUsage-Gauge-Mutation", "1");
+  headers.set("X-AI-Usage-Gauge-Mutation", "1");
   if (init.body != null) headers.set("Content-Type", "application/json");
   return requestJSON<T>(path, { ...init, headers });
 }

@@ -3,7 +3,7 @@ export type ColorScheme = "dark" | "light";
 export const DEFAULT_COLOR_SCHEME: ColorScheme = "dark";
 // A new key on purpose: the pre-dark-only key was written from prefers-color-scheme,
 // so reading it would reopen light-OS users in light instead of the dark default.
-export const COLOR_SCHEME_STORAGE_KEY = "ccusage-gauge-theme";
+export const COLOR_SCHEME_STORAGE_KEY = "ai-usage-gauge-theme";
 
 type SchemeStorage = Pick<Storage, "getItem" | "setItem">;
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="$repository_root/deploy/emulation/compose.yaml"
-project_name="ccusage-gauge-remote-smoke"
+project_name="ai-usage-gauge-remote-smoke"
 
 # Stub mode remains a fast deterministic check. Real mode is explicit and can
 # never silently fall back when Docker, fixtures, or parity checks are missing.
@@ -110,7 +110,7 @@ register_machine() {
   test -n "$port"
   "${compose[@]}" exec -T collector curl --fail --silent \
     -H 'Content-Type: application/json' \
-    -H 'X-CCUsage-Gauge-Mutation: 1' \
+    -H 'X-AI-Usage-Gauge-Mutation: 1' \
     -X POST http://127.0.0.1:18081/api/machines \
     --data "{\"id\":\"$id\",\"displayName\":\"$id\",\"kind\":\"ssh\",\"enabled\":true,\"ssh\":{\"host\":\"host.docker.internal\",\"port\":$port,\"user\":\"ccusage\",\"identityFile\":\"/run/ccusage-secrets/id_ed25519\",\"extraOptions\":[\"-o ConnectTimeout=5\",\"-o StrictHostKeyChecking=accept-new\",\"-o UserKnownHostsFile=/run/ccusage-secrets/known_hosts\"],\"remoteCcusagePath\":\"ccusage\"}}" >/dev/null
 }
@@ -119,7 +119,7 @@ register_machine machine-b
 
 connection_json="$("${compose[@]}" exec -T collector curl --fail --silent \
   -H 'Content-Type: application/json' \
-  -H 'X-CCUsage-Gauge-Mutation: 1' \
+  -H 'X-AI-Usage-Gauge-Mutation: 1' \
   -X POST http://127.0.0.1:18081/api/machines/machine-a/test-connection \
   --data '{}')"
 python3 - "$connection_json" <<'PY'
@@ -168,7 +168,7 @@ refresh_json=""
 for _ in $(seq 1 60); do
   refresh_json="$("${compose[@]}" exec -T collector curl --silent \
     -H 'Content-Type: application/json' \
-    -H 'X-CCUsage-Gauge-Mutation: 1' \
+    -H 'X-AI-Usage-Gauge-Mutation: 1' \
     -X POST http://127.0.0.1:18081/api/machines/machine-b/refresh \
     --data '{}')" || true
   degraded_json="$("${compose[@]}" exec -T collector curl --fail --silent 'http://127.0.0.1:18081/api/metrics?range=all&machine=all')"

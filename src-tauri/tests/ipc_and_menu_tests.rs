@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use ccusage_core::aggregation::collector::{
+use ai_usage_core::aggregation::collector::{
     FetchFuture, MachineCollector, MachineSnapshotFetcher, MachineSnapshotStore,
 };
-use ccusage_core::dashboard::MachineDashboardRouter;
-use ccusage_core::paths::AppPaths;
-use ccusage_core::state::StateStore;
-use ccusage_core::types::{
+use ai_usage_core::dashboard::MachineDashboardRouter;
+use ai_usage_core::paths::AppPaths;
+use ai_usage_core::state::StateStore;
+use ai_usage_core::types::{
     AppConfiguration, AppState, BudgetSummary, ChartColors, CostSnapshot, LocalSessionSources,
     MachineDescriptor, MachineKind, MachineRegistry, MachineRuntimeReconciler, PieChartId,
     ProviderRateLimits, RateLimitCreditUnit, RateLimitCredits, RateLimitProvider, RateLimitStatus,
@@ -18,15 +18,15 @@ use rust_decimal::Decimal;
 use serde_json::Value;
 use tempfile::TempDir;
 
-use ccusage_gauge_app::dialogs::{
+use ai_usage_gauge_app::dialogs::{
     apply_budget_update, apply_custom_hours_update, apply_refresh_interval_update,
     validate_budget_usd, validate_custom_hours, validate_refresh_interval_seconds,
 };
-use ccusage_gauge_app::ipc::{
+use ai_usage_gauge_app::ipc::{
     dispatch_ipc_request, validate_ipc_request, DashboardIpcRequest, MAX_IPC_BODY_BYTES,
 };
-use ccusage_gauge_app::launch_at_login::{LaunchAtLoginController, LaunchAtLoginState};
-use ccusage_gauge_app::tray_menu::TrayViewModel;
+use ai_usage_gauge_app::launch_at_login::{LaunchAtLoginController, LaunchAtLoginState};
+use ai_usage_gauge_app::tray_menu::TrayViewModel;
 
 fn sample_state() -> AppState {
     AppState {

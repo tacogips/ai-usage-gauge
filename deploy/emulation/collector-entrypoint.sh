@@ -10,18 +10,18 @@ while test ! -s /run/ccusage-secrets/id_ed25519; do sleep 0.1; done
 test "$(stat -c %a /run/ccusage-secrets/id_ed25519)" = 400
 chown collector:collector /run/ccusage-secrets/id_ed25519
 
-mkdir -p /runtime/config/ccusage-gauge /runtime/state/ccusage-gauge /runtime/cache/ccusage-gauge
-chmod 0700 /runtime/config/ccusage-gauge /runtime/state/ccusage-gauge /runtime/cache/ccusage-gauge
-if test ! -e /runtime/config/ccusage-gauge/ccusage-config.json; then
+mkdir -p /runtime/config/ai-usage-gauge /runtime/state/ai-usage-gauge /runtime/cache/ai-usage-gauge
+chmod 0700 /runtime/config/ai-usage-gauge /runtime/state/ai-usage-gauge /runtime/cache/ai-usage-gauge
+if test ! -e /runtime/config/ai-usage-gauge/config.json; then
   umask 077
-  printf '%s\n' '{"ccusagePath":"/usr/local/bin/ccusage","defaultResetTerm":"daily","dashboardPort":18081,"dashboardAutostart":true,"pollIntervalSeconds":60,"cacheRetentionDays":365}' > /runtime/config/ccusage-gauge/ccusage-config.json
+  printf '%s\n' '{"ccusagePath":"/usr/local/bin/ccusage","defaultResetTerm":"daily","dashboardPort":18081,"dashboardAutostart":true,"pollIntervalSeconds":60,"cacheRetentionDays":365}' > /runtime/config/ai-usage-gauge/config.json
 fi
 chown -R collector:collector /runtime
 
-export CCUSAGE_GAUGE_CONFIG_HOME=/runtime/config
-export CCUSAGE_GAUGE_STATE_HOME=/runtime/state
-export CCUSAGE_GAUGE_CACHE_HOME=/runtime/cache
+export AI_USAGE_GAUGE_CONFIG_HOME=/runtime/config
+export AI_USAGE_GAUGE_STATE_HOME=/runtime/state
+export AI_USAGE_GAUGE_CACHE_HOME=/runtime/cache
 export HOME=/home/collector
 export TZ=UTC
 exec setpriv --reuid=collector --regid=collector --init-groups \
-  /usr/local/bin/ccusage-gauge serve --port 18081
+  /usr/local/bin/ai-usage-gauge serve --port 18081

@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build ccusage-gauge on Linux amd64
+    name: Build ai-usage-gauge on Linux amd64
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -45,25 +45,25 @@ jobs:
       - name: Build And Verify Linux amd64 CLI
         run: |
           set -euo pipefail
-          cargo test --locked -p ccusage-core -p ccusage-cli
-          cargo build --locked --release -p ccusage-cli --target x86_64-unknown-linux-gnu
+          cargo test --locked -p ai-usage-core -p ai-usage-cli
+          cargo build --locked --release -p ai-usage-cli --target x86_64-unknown-linux-gnu
 
           stage="dist/linux-amd64"
           rm -rf "$stage"
-          mkdir -p "$stage/bin" "$stage/share/ccusage-gauge/web"
-          install -m 0755 "target/x86_64-unknown-linux-gnu/release/ccusage-gauge" "$stage/bin/ccusage-gauge"
-          cp -R frontend/dist/. "$stage/share/ccusage-gauge/web/"
+          mkdir -p "$stage/bin" "$stage/share/ai-usage-gauge/web"
+          install -m 0755 "target/x86_64-unknown-linux-gnu/release/ai-usage-gauge" "$stage/bin/ai-usage-gauge"
+          cp -R frontend/dist/. "$stage/share/ai-usage-gauge/web/"
           cp LICENSE README.md "$stage/"
 
           scripts/smoke-dashboard.sh \
             --port 18083 \
-            --binary "$stage/bin/ccusage-gauge" \
+            --binary "$stage/bin/ai-usage-gauge" \
             --installed-assets
-          tar -C "$stage" -czf "dist/ccusage-gauge-linux-amd64.tar.gz" .
+          tar -C "$stage" -czf "dist/ai-usage-gauge-linux-amd64.tar.gz" .
 
       - name: Upload Linux amd64 Archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ccusage-gauge-linux-amd64
-          path: dist/ccusage-gauge-linux-amd64.tar.gz
+          name: ai-usage-gauge-linux-amd64
+          path: dist/ai-usage-gauge-linux-amd64.tar.gz
           if-no-files-found: error

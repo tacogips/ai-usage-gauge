@@ -2,8 +2,8 @@ use chrono::Utc;
 use chrono_tz::Tz;
 use rust_decimal::Decimal;
 
-use ccusage_core::state::{ResetWindowCalculator, StateStore};
-use ccusage_core::types::{AppState, ResetCycle};
+use ai_usage_core::state::{ResetWindowCalculator, StateStore};
+use ai_usage_core::types::{AppState, ResetCycle};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialogValidationError {

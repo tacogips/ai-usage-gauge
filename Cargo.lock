@@ -31,6 +31,74 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-usage-cli"
+version = "0.5.1"
+dependencies = [
+ "ai-usage-core",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "iana-time-zone",
+ "rusqlite",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "ai-usage-core"
+version = "0.5.1"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "iana-time-zone",
+ "libc",
+ "percent-encoding",
+ "png 0.17.16",
+ "portable-pty",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tiny-skia",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "ai-usage-gauge-app"
+version = "0.5.1"
+dependencies = [
+ "ai-usage-core",
+ "chrono",
+ "chrono-tz",
+ "iana-time-zone",
+ "objc2",
+ "percent-encoding",
+ "png 0.17.16",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tempfile",
+ "tiny-skia",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -404,74 +472,6 @@ checksum = "02f0e023adb368345ce0ca6cdfc0f24a06554468d0e8503e14a0841de79bfa69"
 dependencies = [
  "find-msvc-tools",
  "shlex",
-]
-
-[[package]]
-name = "ccusage-cli"
-version = "0.5.1"
-dependencies = [
- "ccusage-core",
- "chrono",
- "chrono-tz",
- "clap",
- "iana-time-zone",
- "rusqlite",
- "rust_decimal",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "ccusage-core"
-version = "0.5.1"
-dependencies = [
- "chrono",
- "chrono-tz",
- "clap",
- "http-body-util",
- "hyper",
- "hyper-util",
- "iana-time-zone",
- "libc",
- "percent-encoding",
- "png 0.17.16",
- "portable-pty",
- "reqwest 0.12.28",
- "rusqlite",
- "rust_decimal",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.21",
- "tiny-skia",
- "tokio",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "ccusage-gauge-app"
-version = "0.5.1"
-dependencies = [
- "ccusage-core",
- "chrono",
- "chrono-tz",
- "iana-time-zone",
- "objc2",
- "percent-encoding",
- "png 0.17.16",
- "rust_decimal",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tempfile",
- "tiny-skia",
- "tokio",
- "url",
 ]
 
 [[package]]

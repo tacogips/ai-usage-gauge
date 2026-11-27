@@ -1,0 +1,30 @@
+[package]
+name = "ai-usage-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+rust_decimal.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+iana-time-zone.workspace = true
+rusqlite.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+portable-pty.workspace = true
+libc.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+percent-encoding.workspace = true
+url.workspace = true
+sha2.workspace = true
+clap.workspace = true
+png.workspace = true
+tiny-skia.workspace = true
+tempfile.workspace = true

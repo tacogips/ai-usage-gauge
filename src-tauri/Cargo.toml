@@ -1,15 +1,15 @@
 [package]
-name = "ccusage-gauge-app"
+name = "ai-usage-gauge-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "ccusage_gauge_app"
+name = "ai_usage_gauge_app"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ccusage-gauge-app"
+name = "ai-usage-gauge-app"
 path = "src/main.rs"
 
 [build-dependencies]
@@ -19,7 +19,7 @@ tauri-build.workspace = true
 tauri.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-ccusage-core = { path = "../crates/ccusage-core" }
+ai-usage-core = { path = "../crates/ai-usage-core" }
 png.workspace = true
 tiny-skia.workspace = true
 tokio.workspace = true

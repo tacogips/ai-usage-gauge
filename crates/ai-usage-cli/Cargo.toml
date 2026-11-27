@@ -1,0 +1,24 @@
+[package]
+name = "ai-usage-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ai-usage-gauge"
+path = "src/main.rs"
+
+[dependencies]
+ai-usage-core = { path = "../ai-usage-core" }
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+iana-time-zone.workspace = true
+rust_decimal.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rusqlite.workspace = true

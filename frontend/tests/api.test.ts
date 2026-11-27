@@ -125,7 +125,7 @@ describe("dashboard API requests", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].path).toBe("/api/subdirectories/name");
     expect(calls[0].init?.method).toBe("PUT");
-    expect(new Headers(calls[0].init?.headers).get("X-CCUsage-Gauge-Mutation")).toBe("1");
+    expect(new Headers(calls[0].init?.headers).get("X-AI-Usage-Gauge-Mutation")).toBe("1");
     expect(new Headers(calls[0].init?.headers).get("Content-Type")).toBe("application/json");
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       machine: "local",

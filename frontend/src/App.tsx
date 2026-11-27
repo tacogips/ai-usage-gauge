@@ -1153,7 +1153,7 @@ export default function App() {
       <main class="content" aria-busy={isBlockingLoading() || isBackgroundLoading()}>
         <header classList={{ "header-collapsed": headerCollapsed() }}>
           <HeaderFoldBar
-            title={<div class="dashboard-title"><h1>ccusage-gauge</h1></div>}
+            title={<div class="dashboard-title"><h1>ai-usage-gauge</h1></div>}
             rangeLabel={rangeLabel()}
             collapsed={headerCollapsed()}
             onToggle={() => setHeaderCollapsed((collapsed) => !collapsed)}

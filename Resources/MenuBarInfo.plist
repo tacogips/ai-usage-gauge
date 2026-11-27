@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
-  <key>CFBundleDisplayName</key><string>CCUsage Gauge</string>
-  <key>CFBundleExecutable</key><string>ccusage-gauge-app</string>
-  <key>CFBundleIdentifier</key><string>com.tacogips.ccusage-gauge</string>
+  <key>CFBundleDisplayName</key><string>AI Usage Gauge</string>
+  <key>CFBundleExecutable</key><string>ai-usage-gauge-app</string>
+  <key>CFBundleIdentifier</key><string>com.tacogips.ai-usage-gauge</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>CCUsageGauge</string>

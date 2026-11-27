@@ -112,7 +112,7 @@ subprocess.check_call(base + ['stop', 'machine-b'], stdout=subprocess.DEVNULL)
 time.sleep(1.1)
 failed_refresh = subprocess.run(
     base + ['exec', '-T', 'collector', 'curl', '--fail', '--silent', '-H',
-            'X-CCUsage-Gauge-Mutation: 1', 'http://127.0.0.1:18081/api/refresh?machine=machine-b'],
+            'X-AI-Usage-Gauge-Mutation: 1', 'http://127.0.0.1:18081/api/refresh?machine=machine-b'],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
 )
 assert failed_refresh.returncode != 0
@@ -133,7 +133,7 @@ subprocess.check_call(
 for _ in range(20):
     subprocess.run(
         base + ['exec', '-T', 'collector', 'curl', '--fail', '--silent', '-H',
-                'X-CCUsage-Gauge-Mutation: 1', 'http://127.0.0.1:18081/api/refresh?machine=machine-b'],
+                'X-AI-Usage-Gauge-Mutation: 1', 'http://127.0.0.1:18081/api/refresh?machine=machine-b'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     recovered = api(f'/api/metrics?{fixed}&machine=all')['scope']

@@ -3,8 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-artifact_name="ccusage-gauge"
-product="ccusage-gauge"
+artifact_name="ai-usage-gauge"
+product="ai-usage-gauge"
 
 usage() {
   cat <<EOF
@@ -33,7 +33,7 @@ main() {
   local version="$1"
   local output="${2:-$repo_root/Casks/$artifact_name.rb}"
   local release_dir="${CASK_RELEASE_DIR:-$repo_root/dist/homebrew-cask}"
-  local release_base_url="${CASK_RELEASE_BASE_URL:-https://github.com/tacogips/ccusage-gauge/releases/download/v$version}"
+  local release_base_url="${CASK_RELEASE_BASE_URL:-https://github.com/tacogips/ai-usage-gauge/releases/download/v$version}"
 
   local darwin_arm64_sha darwin_x64_sha
   darwin_arm64_sha="$(sha_for_target "$version" darwin-arm64 "$release_dir")"
@@ -41,7 +41,7 @@ main() {
 
   mkdir -p "$(dirname "$output")"
   cat > "$output" <<EOF
-cask "ccusage-gauge" do
+cask "ai-usage-gauge" do
   arch arm: "darwin-arm64", intel: "darwin-x64"
 
   version "$version"
@@ -49,9 +49,9 @@ cask "ccusage-gauge" do
          intel: "$darwin_x64_sha"
 
   url "$release_base_url/$artifact_name-#{version}-#{arch}.dmg"
-  name "CCUsage Gauge"
+  name "AI Usage Gauge"
   desc "Menu bar gauge for Claude Code, Codex, and Antigravity subscription limits, credits, and costs"
-  homepage "https://github.com/tacogips/ccusage-gauge"
+  homepage "https://github.com/tacogips/ai-usage-gauge"
 
   livecheck do
     url :url
@@ -60,8 +60,8 @@ cask "ccusage-gauge" do
 
   depends_on macos: :sonoma
 
-  app "CCUsageGauge.app"
-  binary "#{appdir}/CCUsageGauge.app/Contents/MacOS/$product", target: "$product"
+  app "AIUsageGauge.app"
+  binary "#{appdir}/AIUsageGauge.app/Contents/MacOS/$product", target: "$product"
 
   caveats do
     <<~EOS

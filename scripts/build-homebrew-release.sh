@@ -3,8 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-product="ccusage-gauge"
-artifact_name="ccusage-gauge"
+product="ai-usage-gauge"
+artifact_name="ai-usage-gauge"
 
 usage() {
   cat <<EOF
@@ -108,8 +108,8 @@ print_plan() {
   printf '  product: %s\n' "$product"
   printf '  target: %s\n' "$target"
   printf '  rust target: %s\n' "$triple"
-  printf '  build command: cargo build --locked --release -p ccusage-cli -p ccusage-gauge-app --target %s\n' "$triple"
-  printf '  staged binaries: %s/bin/%s, %s/bin/ccusage-gauge-app\n' "$work_dir" "$product" "$work_dir"
+  printf '  build command: cargo build --locked --release -p ai-usage-cli -p ai-usage-gauge-app --target %s\n' "$triple"
+  printf '  staged binaries: %s/bin/%s, %s/bin/ai-usage-gauge-app\n' "$work_dir" "$product" "$work_dir"
   printf '  archive: %s\n' "$archive"
   printf '  checksum: %s.sha256\n' "$archive"
   printf '  publish side effects: false\n'
@@ -124,18 +124,18 @@ build_target() {
   bin_dir="$repo_root/target/$triple/release"
 
   rm -rf "$work_dir" "$archive" "$archive.sha256"
-  mkdir -p "$work_dir/bin" "$work_dir/share/ccusage-gauge/web"
+  mkdir -p "$work_dir/bin" "$work_dir/share/ai-usage-gauge/web"
 
   (
     cd "$repo_root"
-    cargo build --locked --release -p ccusage-cli -p ccusage-gauge-app --target "$triple"
+    cargo build --locked --release -p ai-usage-cli -p ai-usage-gauge-app --target "$triple"
   )
 
   cp "$bin_dir/$product" "$work_dir/bin/$product"
-  cp "$bin_dir/ccusage-gauge-app" "$work_dir/bin/ccusage-gauge-app"
-  chmod 0755 "$work_dir/bin/$product" "$work_dir/bin/ccusage-gauge-app"
+  cp "$bin_dir/ai-usage-gauge-app" "$work_dir/bin/ai-usage-gauge-app"
+  chmod 0755 "$work_dir/bin/$product" "$work_dir/bin/ai-usage-gauge-app"
   verify_staged_binary "$work_dir/bin/$product" "$target" "$version"
-  cp -R "$repo_root/frontend/dist/." "$work_dir/share/ccusage-gauge/web/"
+  cp -R "$repo_root/frontend/dist/." "$work_dir/share/ai-usage-gauge/web/"
   cp "$repo_root/README.md" "$repo_root/LICENSE" "$work_dir/"
 
   tar -C "$work_dir" -czf "$archive" .

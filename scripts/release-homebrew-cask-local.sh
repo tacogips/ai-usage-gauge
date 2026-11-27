@@ -3,8 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-artifact_name="ccusage-gauge"
-github_repository="tacogips/ccusage-gauge"
+artifact_name="ai-usage-gauge"
+github_repository="tacogips/ai-usage-gauge"
 
 usage() {
   cat <<EOF
@@ -89,7 +89,7 @@ release_notes="Signed, notarized, and stapled macOS DMG archives for the Homebre
 if ! gh release view "$release_tag" --repo "$github_repository" >/dev/null 2>&1; then
   gh release create "$release_tag" \
     --repo "$github_repository" \
-    --title "ccusage-gauge $release_tag" \
+    --title "ai-usage-gauge $release_tag" \
     --notes "$release_notes"
 fi
 
@@ -101,4 +101,4 @@ printf '\nRendered tap cask: %s\n' "$tap_cask_file"
 printf 'Review, commit, and push the tap change from the tap repository.\n'
 printf 'Then install with:\n'
 printf '  brew tap tacogips/tap\n'
-printf '  brew install --cask ccusage-gauge\n'
+printf '  brew install --cask ai-usage-gauge\n'

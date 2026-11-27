@@ -16,7 +16,7 @@ You (the LLM model) must include a paraphrase or summary of the user's instructi
 
 ## Project Overview
 
-This is `ccusage-gauge`, a pure Rust and Tauri v2 workspace (`crates/ccusage-core`, `crates/ccusage-cli`, `src-tauri`) with a SolidJS frontend (`frontend/`), a mise-managed development environment and task automation, Homebrew formula packaging, and optional signed Homebrew Cask packaging.
+This is `ai-usage-gauge`, a pure Rust and Tauri v2 workspace (`crates/ai-usage-core`, `crates/ai-usage-cli`, `src-tauri`) with a SolidJS frontend (`frontend/`), a mise-managed development environment and task automation, Homebrew formula packaging, and optional signed Homebrew Cask packaging.
 
 ## Development Environment
 
@@ -32,7 +32,7 @@ This is `ccusage-gauge`, a pure Rust and Tauri v2 workspace (`crates/ccusage-cor
 mise run build
 mise run test
 mise run lint
-cargo run -p ccusage-cli -- --help
+cargo run -p ai-usage-cli -- --help
 ```
 
 ## Rust and Tauri Code Development
@@ -40,7 +40,7 @@ cargo run -p ccusage-cli -- --help
 Important defaults:
 
 - Inspect `Cargo.toml`, nearby crate source, tests, and existing conventions before editing.
-- Prefer the current workspace crate boundaries (`crates/ccusage-core`, `crates/ccusage-cli`, `src-tauri`) over adding new crates.
+- Prefer the current workspace crate boundaries (`crates/ai-usage-core`, `crates/ai-usage-cli`, `src-tauri`) over adding new crates.
 - Keep Rust source files under 1000 lines. Split long files by meaningful responsibility.
 - Run `cargo clippy --locked --workspace --all-targets -- -D warnings` after Rust edits.
 - Run the narrowest relevant `cargo test` or `cargo build` command, then broaden to `cargo test --locked --workspace` when shared behavior changed.

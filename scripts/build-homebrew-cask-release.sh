@@ -3,8 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-product="ccusage-gauge"
-artifact_name="ccusage-gauge"
+product="ai-usage-gauge"
+artifact_name="ai-usage-gauge"
 
 usage() {
   cat <<EOF
@@ -98,7 +98,7 @@ print_plan() {
   triple="$(rust_target_for "$target")"
   work_dir="$release_dir/work/$artifact_name-$version-$target"
   dmg_path="$release_dir/$artifact_name-$version-$target.dmg"
-  staged_app="$work_dir/CCUsageGauge.app"
+  staged_app="$work_dir/AIUsageGauge.app"
 
   printf 'Rust Homebrew Cask DMG plan\n'
   printf '  product: %s\n' "$product"
@@ -116,7 +116,7 @@ build_target() {
   triple="$(rust_target_for "$target")"
   work_dir="$release_dir/work/$artifact_name-$version-$target"
   dmg_path="$release_dir/$artifact_name-$version-$target.dmg"
-  staged_app="$work_dir/CCUsageGauge.app"
+  staged_app="$work_dir/AIUsageGauge.app"
   bin_dir="$repo_root/target/$triple/release"
   notarytool="${NOTARYTOOL:-/Applications/Xcode.app/Contents/Developer/usr/bin/notarytool}"
   stapler="${STAPLER:-/Applications/Xcode.app/Contents/Developer/usr/bin/stapler}"
@@ -137,11 +137,11 @@ build_target() {
 
   (
     cd "$repo_root"
-    cargo build --locked --release -p ccusage-cli -p ccusage-gauge-app --target "$triple"
+    cargo build --locked --release -p ai-usage-cli -p ai-usage-gauge-app --target "$triple"
   )
 
-  cp "$bin_dir/$product" "$bin_dir/ccusage-gauge-app" "$staged_app/Contents/MacOS/"
-  chmod 0755 "$staged_app/Contents/MacOS/$product" "$staged_app/Contents/MacOS/ccusage-gauge-app"
+  cp "$bin_dir/$product" "$bin_dir/ai-usage-gauge-app" "$staged_app/Contents/MacOS/"
+  chmod 0755 "$staged_app/Contents/MacOS/$product" "$staged_app/Contents/MacOS/ai-usage-gauge-app"
   verify_staged_binary "$staged_app/Contents/MacOS/$product" "$target" "$version"
   cp "$repo_root/Resources/AppIcon.icns" "$staged_app/Contents/Resources/"
   cp -R "$repo_root/frontend/dist/." "$staged_app/Contents/Resources/Web/"
@@ -150,7 +150,7 @@ build_target() {
   plutil -replace CFBundleVersion -string "$version" "$staged_app/Contents/Info.plist"
 
   codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged_app/Contents/MacOS/$product"
-  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged_app/Contents/MacOS/ccusage-gauge-app"
+  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged_app/Contents/MacOS/ai-usage-gauge-app"
   codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged_app"
   codesign --verify --deep --strict --verbose=2 "$staged_app"
 

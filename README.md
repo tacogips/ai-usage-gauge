@@ -1,6 +1,6 @@
-# ccusage-gauge
+# ai-usage-gauge
 
-**ccusage-gauge shows how much of your Claude Code, Codex (ChatGPT), and Gemini
+**ai-usage-gauge shows how much of your Claude Code, Codex (ChatGPT), and Gemini
 (Antigravity CLI) subscription limits you have used — the 5-hour and weekly windows as used and
 remaining percentages with reset countdowns, plus extra-usage credits — together
 with token counts and API-equivalent cost history.** It runs as a macOS menu-bar
@@ -8,7 +8,7 @@ app, a native or browser dashboard, a CLI, and a local HTTP API.
 
 ## What it shows
 
-ccusage-gauge displays two different kinds of information and keeps them apart:
+ai-usage-gauge displays two different kinds of information and keeps them apart:
 
 | Information | Meaning | Source |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ Where it appears:
 - **macOS menu bar**: Claude, ChatGPT/Codex, and Gemini icons that fill from bottom to
   top as subscription usage rises, optional percentages, spend or budget
   progress, and a hover tooltip with credits.
-- **Dashboard** (native window or `ccusage-gauge serve` in a browser): a
+- **Dashboard** (native window or `ai-usage-gauge serve` in a browser): a
   Subscription usage panel with per-window pies, used %, reset countdowns, and
   credit charts above token and cost charts by model, agent, machine, and
   directory.
@@ -42,7 +42,7 @@ Where it appears:
   come from local usage logs. Limits come from the providers.
 - **Which platforms?** The menu-bar app is macOS (Apple silicon and Intel). The
   CLI and dashboard server also run on Linux.
-- **How do I install it?** `brew install --cask tacogips/tap/ccusage-gauge`
+- **How do I install it?** `brew install --cask tacogips/tap/ai-usage-gauge`
   (see [Install with Homebrew](#install-with-homebrew)).
 - **Does it send my credentials anywhere?** Only to the provider's own usage
   endpoint. Tokens are never logged, stored, or returned; see
@@ -50,7 +50,7 @@ Where it appears:
 
 ## Overview
 
-ccusage-gauge is a pure Rust and Tauri v2 application that scans local Claude Code,
+ai-usage-gauge is a pure Rust and Tauri v2 application that scans local Claude Code,
 Codex, and Antigravity CLI usage logs directly without requiring a local `ccusage`
 installation. Remote SSH machines can still collect usage via a remote `ccusage`
 binary.
@@ -73,40 +73,40 @@ submenu.
 The compact status item shows current spend and budget usage at a glance.
 
 <p align="center">
-  <img src="design-docs/screenshots/menu-bar-status.png" alt="ccusage-gauge menu-bar status showing spend and budget usage" width="384">
+  <img src="design-docs/screenshots/menu-bar-status.png" alt="ai-usage-gauge menu-bar status showing spend and budget usage" width="384">
 </p>
 
 The expanded menu provides budget, aggregation-period, refresh-interval, settings,
 and dashboard controls.
 
 <p align="center">
-  <img src="design-docs/screenshots/menu-bar-menu.png" alt="ccusage-gauge expanded menu" width="608">
+  <img src="design-docs/screenshots/menu-bar-menu.png" alt="ai-usage-gauge expanded menu" width="608">
 </p>
 
 ### Dashboard
 
-![ccusage-gauge dashboard showing model filters, cost metrics, and hourly usage](design-docs/screenshots/dashboard.png)
+![ai-usage-gauge dashboard showing model filters, cost metrics, and hourly usage](design-docs/screenshots/dashboard.png)
 
 ## Install with Homebrew
 
-Install the CCUsage Gauge Cask:
+Install the AI Usage Gauge Cask:
 
 ```bash
-brew install --cask tacogips/tap/ccusage-gauge
+brew install --cask tacogips/tap/ai-usage-gauge
 ```
 
-The Cask installs the macOS menu-bar app (`CCUsageGauge.app`) and the `ccusage-gauge`
-command-line tool. Open **CCUsage Gauge** from Applications after installation, or run
-`ccusage-gauge dashboard` to open the native dashboard. Use
-`ccusage-gauge serve` for the optional browser dashboard.
+The Cask installs the macOS menu-bar app (`AIUsageGauge.app`) and the `ai-usage-gauge`
+command-line tool. Open **AI Usage Gauge** from Applications after installation, or run
+`ai-usage-gauge dashboard` to open the native dashboard. Use
+`ai-usage-gauge serve` for the optional browser dashboard.
 
 To update the app:
 
 ```bash
-brew upgrade --cask tacogips/tap/ccusage-gauge
+brew upgrade --cask tacogips/tap/ai-usage-gauge
 ```
 
-Quit and reopen **CCUsage Gauge** after upgrading so it uses the installed version.
+Quit and reopen **AI Usage Gauge** after upgrading so it uses the installed version.
 
 The SolidJS dashboard provides:
 
@@ -185,7 +185,7 @@ remains visible but is disabled and struck through.
 
 ## Native dashboard (Tauri)
 
-The menu-bar app (`ccusage-gauge-app`) is a single Rust + Tauri v2 application
+The menu-bar app (`ai-usage-gauge-app`) is a single Rust + Tauri v2 application
 that owns collection, caches, machine management, tray icons/menus, and the
 native SolidJS dashboard window in one process via Tauri IPC. No HTTP listener,
 browser, or Vite development server is needed.
@@ -194,9 +194,9 @@ browser, or Vite development server is needed.
 mise run desktop:run
 ```
 
-After `mise run desktop:build`, use `cargo run -p ccusage-cli -- dashboard` (or
-`ccusage-gauge dashboard`). The CLI resolves the sibling `ccusage-gauge-app`
-executable, or uses `CCUSAGE_GAUGE_DESKTOP_EXECUTABLE=/absolute/path/to/ccusage-gauge-app`
+After `mise run desktop:build`, use `cargo run -p ai-usage-cli -- dashboard` (or
+`ai-usage-gauge dashboard`). The CLI resolves the sibling `ai-usage-gauge-app`
+executable, or uses `AI_USAGE_GAUGE_DESKTOP_EXECUTABLE=/absolute/path/to/ai-usage-gauge-app`
 when set, and launches it with `--open-dashboard`.
 Closing the dashboard window hides it while leaving the menu-bar gauge running.
 **Open dashboard** focuses an existing window or shows it again.
@@ -206,37 +206,37 @@ Closing the dashboard window hides it while leaving the menu-bar gauge running.
 The desktop build requires Rust, Bun, and native Tauri prerequisites
 (Xcode Command Line Tools on macOS; WebKitGTK 4.1 and other Tauri development
 libraries on Linux). Both the macOS app bundle and Formula release archives
-include `ccusage-gauge` and `ccusage-gauge-app`. The Cask installs the signed
-and notarized `CCUsageGauge.app` bundle and CLI.
+include `ai-usage-gauge` and `ai-usage-gauge-app`. The Cask installs the signed
+and notarized `AIUsageGauge.app` bundle and CLI.
 
 ## Optional dashboard server (macOS and Linux)
 
-The `ccusage-gauge` CLI runs the dashboard on both macOS and Linux. Only the
+The `ai-usage-gauge` CLI runs the dashboard on both macOS and Linux. Only the
 menu-bar application is macOS-specific.
 
 Start the loopback server with:
 
 ```bash
-ccusage-gauge serve
+ai-usage-gauge serve
 ```
 
 It binds to `127.0.0.1` and uses the configured `dashboardPort`, which defaults
 to `18081`. Override the port or use a development frontend build with:
 
 ```bash
-ccusage-gauge serve --port 19090 --assets frontend/dist
+ai-usage-gauge serve --port 19090 --assets frontend/dist
 ```
 
-The installed Linux layout places the executable at `bin/ccusage-gauge` and
-the dashboard files under `share/ccusage-gauge/web`.
+The installed Linux layout places the executable at `bin/ai-usage-gauge` and
+the dashboard files under `share/ai-usage-gauge/web`.
 
 ## Installation with Nix (nix-darwin)
 
-CCUsage Gauge can be installed declaratively through nix-darwin's Homebrew
+AI Usage Gauge can be installed declaratively through nix-darwin's Homebrew
 integration. Homebrew must already be installed, either separately or through
 a Nix Homebrew integration such as `nix-homebrew`.
 
-Add the tap and the CCUsage Gauge Cask to a nix-darwin module:
+Add the tap and the AI Usage Gauge Cask to a nix-darwin module:
 
 ```nix
 { ... }:
@@ -244,7 +244,7 @@ Add the tap and the CCUsage Gauge Cask to a nix-darwin module:
   homebrew = {
     enable = true;
     taps = [ "tacogips/tap" ];
-    casks = [ "tacogips/tap/ccusage-gauge" ];
+    casks = [ "tacogips/tap/ai-usage-gauge" ];
   };
 }
 ```
@@ -274,26 +274,26 @@ mise run test
 mise run lint
 mise run app:build
 mise run app:run
-cargo run -p ccusage-cli -- --help
+cargo run -p ai-usage-cli -- --help
 ```
 
-`mise run app:build` creates an ad-hoc signed `target/CCUsageGauge.app` bundle with
-`Resources/AppIcon.icns`, `Contents/MacOS/ccusage-gauge-app`, `Contents/MacOS/ccusage-gauge`,
+`mise run app:build` creates an ad-hoc signed `target/AIUsageGauge.app` bundle with
+`Resources/AppIcon.icns`, `Contents/MacOS/ai-usage-gauge-app`, `Contents/MacOS/ai-usage-gauge`,
 and `Contents/Resources/Web`. `mise run app:run` builds and launches that menu-bar app.
 Because it is an `LSUIElement` utility, it uses the icon in Finder and launch
 surfaces but intentionally does not remain in the Dock.
 
 The Cargo workspace contains:
 
-- Core library crate: `crates/ccusage-core` (`ccusage-core`)
-- CLI binary crate: `crates/ccusage-cli` (executable: `ccusage-gauge`)
-- Desktop / menu-bar Tauri v2 crate: `src-tauri` (executable: `ccusage-gauge-app`)
+- Core library crate: `crates/ai-usage-core` (`ai-usage-core`)
+- CLI binary crate: `crates/ai-usage-cli` (executable: `ai-usage-gauge`)
+- Desktop / menu-bar Tauri v2 crate: `src-tauri` (executable: `ai-usage-gauge-app`)
 - Frontend assets: `frontend/` (SolidJS + TypeScript, built with Bun)
 
 ## Configuration and state
 
 Static configuration is created once at
-`~/.config/ccusage-gauge/ccusage-config.json`. It is safe to manage this file
+`~/.config/ai-usage-gauge/config.json`. It is safe to manage this file
 read-only with Nix after creation. The application does not rewrite an existing
 configuration file, including one managed by Nix.
 
@@ -331,9 +331,9 @@ The generated defaults are:
 | `chartColors` | object; default empty `light` and `dark` schemes | Optional fixed graph colors for each appearance, keyed by exact machine ID or model name. Values must use `#RRGGBB`. Identities without an override, including newly introduced models, receive a deterministic scheme-specific fallback color that stays stable across metric, range, and filter changes. |
 
 Configuration is loaded when the application starts. After changing any field,
-quit and relaunch `ccusage-gauge`; the menu's **Refresh** action refreshes usage
+quit and relaunch `ai-usage-gauge`; the menu's **Refresh** action refreshes usage
 data but does not reload configuration. For example, to use port `19090`, set
-`"dashboardPort": 19090`, restart `ccusage-gauge serve`, and visit
+`"dashboardPort": 19090`, restart `ai-usage-gauge serve`, and visit
 `http://127.0.0.1:19090/`. This setting does not affect the native window.
 
 For example, fixed custom graph colors can be configured as follows:
@@ -356,12 +356,12 @@ browser remembers the selection. Legacy flat `machines` and `models` maps are
 accepted and applied to both schemes.
 
 Historical daily and timestamped event aggregates are cached at
-`~/.cache/ccusage-gauge/aggregates-<machine-id>.sqlite3`. The first multi-machine
+`~/.cache/ai-usage-gauge/aggregates-<machine-id>.sqlite3`. The first multi-machine
 startup atomically migrates a valid legacy `aggregates.sqlite3` to
 `aggregates-local.sqlite3` when no destination exists. After the initial cache build,
 refreshes run the block, daily, and session queries concurrently while limiting
 daily/session and raw Claude event reads to uncached and current dates. Set
-`CCUSAGE_GAUGE_CACHE_HOME` to override the `.cache` root.
+`AI_USAGE_GAUGE_CACHE_HOME` to override the `.cache` root.
 
 The cache uses the system SQLite library. Metadata, daily aggregates, and
 session aggregates are stored in normalized tables and updated transactionally.
@@ -369,17 +369,17 @@ session aggregates are stored in normalized tables and updated transactionally.
 Validate the production configuration with:
 
 ```bash
-ccusage-gauge config-check
+ai-usage-gauge config-check
 ```
 
 During source development, the equivalent command is:
 
 ```bash
-cargo run -p ccusage-cli -- config-check
+cargo run -p ai-usage-cli -- config-check
 ```
 
 Mutable budget/aggregation-period state is stored separately at
-`~/.local/ccusage-gauge/state.json` with user-only permissions. Menu actions do
+`~/.local/ai-usage-gauge/state.json` with user-only permissions. Menu actions do
 not rewrite the static configuration. The **Refresh interval** submenu can set
 a persistent positive whole-number override in seconds or return to the
 `pollIntervalSeconds` configuration default. The dashboard automatically uses
@@ -436,7 +436,7 @@ for Claude Code, whose usage endpoint throttles frequent callers. The limits inc
 failures. When a provider answers HTTP 429, the next attempt is delayed
 exponentially (one interval, then double, up to 30 minutes) and resets after a
 success. The last successful observation per provider is saved to
-`~/.local/ccusage-gauge/rate-limits.json` (derived numbers only, mode `0600`),
+`~/.local/ai-usage-gauge/rate-limits.json` (derived numbers only, mode `0600`),
 so after a restart or while throttled the app shows that data as stale with its
 "as of" time instead of an error. Opening
 the dashboard triggers rate-limit requests; the menu bar requests them only when
@@ -459,7 +459,7 @@ you edit usage icons and ratio text together, with changes saved immediately.
 
 - **Usage icons** controls the budget and subscription icons. Keep at least one
   enabled. This selection is independent of the dashboard and is saved as
-  `menuBarPieCharts` in `~/.local/ccusage-gauge/state.json`.
+  `menuBarPieCharts` in `~/.local/ai-usage-gauge/state.json`.
 - Under **Ratio text**, **Cost (USD)** shows the amount spent in the selected
   period, even without a configured budget. **Budget percentage** independently
   shows the budget usage percentage. Each subscription switch shows its usage
@@ -548,7 +548,7 @@ An illustrative response with synthetic values is:
 ## Remote machines
 
 `serve` always exposes the synthetic `local` machine and loads SSH descriptors
-from the closed, version-3 `~/.config/ccusage-gauge/machines.json` registry.
+from the closed, version-3 `~/.config/ai-usage-gauge/machines.json` registry.
 Registry creation and edits are available from the dashboard. SSH collection
 executes the remote `ccusage` binary through an operator-provided forwarded port;
 it does not deploy an agent, push data, or persist a cache remotely. Identity
@@ -573,7 +573,7 @@ without restarting. Invalid edits leave the running registry and collectors
 unchanged.
 
 Startup and early runtime failures are written as sanitized JSONL records below
-`~/.local/ccusage-gauge/logs`. The active file rotates before exceeding 10 MiB,
+`~/.local/ai-usage-gauge/logs`. The active file rotates before exceeding 10 MiB,
 rotated files are retained for 72 hours, and log directories/files require
 current-user ownership with modes `0700`/`0600`. Logs never contain raw stderr,
 command lines, request bodies, credentials, or private-key material.
@@ -624,18 +624,18 @@ dashboard's machine admin panel, the CLI, or the HTTP API:
 
 ```bash
 # CLI: replace the Codex directory list and stop reading ~/.codex.
-ccusage-gauge client machines update build-server \
+ai-usage-gauge client machines update build-server \
   --codex-session-dir /srv/codex-a --codex-session-dir /srv/codex-b \
   --exclude-default-codex-dir
 
 # API: the same change as a tri-state PATCH (omitted fields stay unchanged).
 curl -X PATCH http://127.0.0.1:18081/api/machines/build-server \
   -H 'Content-Type: application/json' \
-  -H 'X-CCUsage-Gauge-Mutation: 1' \
+  -H 'X-AI-Usage-Gauge-Mutation: 1' \
   -d '{"codexSessionDirs":["/srv/codex-a","/srv/codex-b"],"includeDefaultCodexDir":false}'
 ```
 
-Committed edits apply without restarting ccusage-gauge: the collector rebuilds
+Committed edits apply without restarting ai-usage-gauge: the collector rebuilds
 the machine's source plan, discards caches produced under the previous
 configuration, and recollects with the new directory set on the next cycle.
 The dashboard intentionally returns to its loading state for that machine
@@ -643,7 +643,7 @@ while the recollection replaces values from the old configuration.
 
 ## Dashboard client commands
 
-The `ccusage-gauge client` command tree talks to a running dashboard server over
+The `ai-usage-gauge client` command tree talks to a running dashboard server over
 loopback for operators and scripts that want to inspect or add SSH machines and
 read the same data the dashboard shows. The server remains the only owner of the
 machine registry, collection state, historical expansion, and query semantics;
@@ -664,42 +664,42 @@ does not add a remote unauthenticated control plane.
 
 ```bash
 # List registered machines (local plus SSH descriptors).
-ccusage-gauge client machines list
+ai-usage-gauge client machines list
 
 # Show one machine.
-ccusage-gauge client machines show remote-box
+ai-usage-gauge client machines show remote-box
 
 # Register a new SSH machine.
-ccusage-gauge client machines add remote-box \
+ai-usage-gauge client machines add remote-box \
   --host box.example.internal --user ccusage \
   --display-name "Remote box" --ssh-port 22 \
   --identity-file ~/.ssh/id_ed25519 \
   --remote-ccusage-path /usr/local/bin/ccusage
 
 # Use a structured SSH jump host.
-ccusage-gauge client machines add remote-via-jump \
+ai-usage-gauge client machines add remote-via-jump \
   --host box.example.internal --user ccusage \
   --proxy-jump-host bastion.example.internal --proxy-jump-user ccusage \
   --proxy-jump-known-hosts-file ~/.ssh/known_hosts
 
 # Register an SSH machine that reads only explicit session directories.
-ccusage-gauge client machines add docker-host \
+ai-usage-gauge client machines add docker-host \
   --host docker.example.internal --user ccusage \
   --codex-session-dir /srv/codex-a --codex-session-dir /srv/codex-b \
   --exclude-default-codex-dir
 
 # Update session-source directories on an existing machine (see
 # "Session source directories" above); applies without a restart.
-ccusage-gauge client machines update local \
+ai-usage-gauge client machines update local \
   --claude-config-dir ~/work/claude --include-default-claude-dir
 
 # Validate connectivity or collect one machine immediately.
-ccusage-gauge client machines test-connection remote-box
-ccusage-gauge client machines refresh remote-box
+ai-usage-gauge client machines test-connection remote-box
+ai-usage-gauge client machines refresh remote-box
 ```
 
 Machine creation and actions send the exact closed request shapes accepted by the server,
-with `Content-Type: application/json` and the `X-CCUsage-Gauge-Mutation: 1`
+with `Content-Type: application/json` and the `X-AI-Usage-Gauge-Mutation: 1`
 header. Read commands never send the mutation header. A connection test runs
 only the fixed `--version` probe and does not modify collection state or cache.
 A targeted refresh reports HTTP-200 `status: failed` as a CLI failure while
@@ -713,17 +713,17 @@ option is repeatable.
 ### Dashboard reads
 
 ```bash
-ccusage-gauge client dashboard budget [--machine <id|all>]
-ccusage-gauge client dashboard recent [--machine <id|all>] [--limit <1...500>]
-ccusage-gauge client dashboard day --date YYYY-MM-DD [--machine <id|all>]
-ccusage-gauge client dashboard period [--range today|yesterday|week|month|custom]
+ai-usage-gauge client dashboard budget [--machine <id|all>]
+ai-usage-gauge client dashboard recent [--machine <id|all>] [--limit <1...500>]
+ai-usage-gauge client dashboard day --date YYYY-MM-DD [--machine <id|all>]
+ai-usage-gauge client dashboard period [--range today|yesterday|week|month|custom]
   [--start YYYY-MM-DD --end YYYY-MM-DD] [--machine <id|all>]
-ccusage-gauge client dashboard metrics [--range all|recent12h|today|yesterday|week|month|custom]
+ai-usage-gauge client dashboard metrics [--range all|recent12h|today|yesterday|week|month|custom]
   [--start YYYY-MM-DD --end YYYY-MM-DD] [--machine <id|all>]
-ccusage-gauge client dashboard cost-series [--range ...] [--granularity 15min|hourly|6hour|daily]
+ai-usage-gauge client dashboard cost-series [--range ...] [--granularity 15min|hourly|6hour|daily]
   [--start YYYY-MM-DD --end YYYY-MM-DD] [--machine <id|all>]
-ccusage-gauge client dashboard machine-status [--machine <id|all>]
-ccusage-gauge client dashboard load-status [--machine <id|all>]
+ai-usage-gauge client dashboard machine-status [--machine <id|all>]
+ai-usage-gauge client dashboard load-status [--machine <id|all>]
 ```
 
 The `--machine` value is `all` (the default aggregate), `local`, or a canonical
@@ -798,14 +798,14 @@ Install from the tap after the formula is published:
 
 ```bash
 brew tap tacogips/tap
-brew install ccusage-gauge
+brew install ai-usage-gauge
 ```
 
 ## Homebrew Cask
 
 The Cask workflow builds signed, notarized, and stapled macOS app archives with
 the project icon for Apple Silicon and Intel Macs. Assets are published to
-[ccusage-gauge releases](https://github.com/tacogips/ccusage-gauge/releases);
+[ai-usage-gauge releases](https://github.com/tacogips/ai-usage-gauge/releases);
 the Formula and Cask definitions live in `tacogips/homebrew-tap`.
 Apple signing credentials must stay local and must not be committed.
 

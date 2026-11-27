@@ -18,13 +18,13 @@ if [[ -n "$assets" && "$assets" != /* ]]; then assets="$project_root/$assets"; f
 if [[ -n "$binary" && "$binary" != /* ]]; then binary="$project_root/$binary"; fi
 
 if [[ -z "$binary" ]]; then
-  if [[ -x "$project_root/target/debug/ccusage-gauge" ]]; then
-    binary="$project_root/target/debug/ccusage-gauge"
-  elif [[ -x "$project_root/target/release/ccusage-gauge" ]]; then
-    binary="$project_root/target/release/ccusage-gauge"
+  if [[ -x "$project_root/target/debug/ai-usage-gauge" ]]; then
+    binary="$project_root/target/debug/ai-usage-gauge"
+  elif [[ -x "$project_root/target/release/ai-usage-gauge" ]]; then
+    binary="$project_root/target/release/ai-usage-gauge"
   else
-    cargo build --manifest-path "$project_root/Cargo.toml" -p ccusage-cli >/dev/null
-    binary="$project_root/target/debug/ccusage-gauge"
+    cargo build --manifest-path "$project_root/Cargo.toml" -p ai-usage-cli >/dev/null
+    binary="$project_root/target/debug/ai-usage-gauge"
   fi
 fi
 
@@ -36,9 +36,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$root/config/ccusage-gauge" "$root/state/ccusage-gauge" "$root/cache/ccusage-gauge" "$root/claude/projects" "$root/codex/sessions"
-chmod 0700 "$root/config/ccusage-gauge" "$root/state/ccusage-gauge" "$root/cache/ccusage-gauge"
-cat >"$root/config/ccusage-gauge/ccusage-config.json" <<JSON
+mkdir -p "$root/config/ai-usage-gauge" "$root/state/ai-usage-gauge" "$root/cache/ai-usage-gauge" "$root/claude/projects" "$root/codex/sessions"
+chmod 0700 "$root/config/ai-usage-gauge" "$root/state/ai-usage-gauge" "$root/cache/ai-usage-gauge"
+cat >"$root/config/ai-usage-gauge/config.json" <<JSON
 {"ccusagePath":null,"defaultResetTerm":"daily","dashboardPort":$port,"dashboardAutostart":false,"pollIntervalSeconds":60}
 JSON
 
@@ -48,12 +48,12 @@ cat >"$root/claude/projects/smoke.jsonl" <<JSONL
 {"type":"assistant","timestamp":"$now_ts","sessionId":"s1","requestId":"r1","cwd":"/tmp/demo","message":{"id":"m1","role":"assistant","model":"claude-sonnet-4-5","usage":{"input_tokens":1000,"output_tokens":200,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
 JSONL
 
-export CCUSAGE_GAUGE_CONFIG_HOME="$root/config"
-export CCUSAGE_GAUGE_STATE_HOME="$root/state"
-export CCUSAGE_GAUGE_CACHE_HOME="$root/cache"
+export AI_USAGE_GAUGE_CONFIG_HOME="$root/config"
+export AI_USAGE_GAUGE_STATE_HOME="$root/state"
+export AI_USAGE_GAUGE_CACHE_HOME="$root/cache"
 export CLAUDE_CONFIG_DIR="$root/claude"
 export CODEX_HOME="$root/codex"
-export CCUSAGE_GAUGE_ANTIGRAVITY_DIR=""
+export AI_USAGE_GAUGE_ANTIGRAVITY_DIR=""
 
 require_free_port() {
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
@@ -84,7 +84,7 @@ run_once() {
   "$binary" "${arguments[@]}" >"$root/server.log" 2>&1 &
   pid=$!
   wait_ready
-  curl -fsS "http://127.0.0.1:$port/" | grep -q 'ccusage-gauge'
+  curl -fsS "http://127.0.0.1:$port/" | grep -q 'ai-usage-gauge'
   curl -fsS "http://127.0.0.1:$port/api/recent" | grep -q 'points'
   curl -fsS "http://127.0.0.1:$port/api/day?date=$today" | grep -q 'points'
   curl -fsS "http://127.0.0.1:$port/api/period?range=today" | grep -q 'points'
@@ -92,7 +92,7 @@ run_once() {
   curl -fsS "http://127.0.0.1:$port/api/cost-series?range=today&granularity=hourly" | grep -q 'claude-sonnet-4-5'
   curl -fsS "http://127.0.0.1:$port/api/budget" | grep -q 'spentUSD'
   cache_clear_response="$(curl -fsS \
-    -H 'X-CCUsage-Gauge-Mutation: 1' \
+    -H 'X-AI-Usage-Gauge-Mutation: 1' \
     -H "Origin: http://127.0.0.1:$port" \
     -H 'Sec-Fetch-Site: same-origin' \
     -X DELETE "http://127.0.0.1:$port/api/cache")"

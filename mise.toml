@@ -39,7 +39,7 @@ cargo build --workspace
 [tasks."run"]
 description = "Run the CLI executable"
 run = '''
-cargo run -p ccusage-cli -- "$@"
+cargo run -p ai-usage-cli -- "$@"
 '''
 
 [tasks."app:build"]
@@ -53,7 +53,7 @@ scripts/build-local-app.sh
 description = "Build and launch the local macOS menu-bar app bundle"
 depends = ["app:build"]
 run = '''
-open target/CCUsageGauge.app
+open target/AIUsageGauge.app
 '''
 
 [tasks."test"]
@@ -63,7 +63,7 @@ cargo test --workspace
 '''
 
 [tasks."test:coverage"]
-description = "Measure Rust line coverage for ccusage-core and ccusage-cli"
+description = "Measure Rust line coverage for ai-usage-core and ai-usage-cli"
 run = '''
 scripts/test-coverage.sh
 '''
@@ -84,21 +84,21 @@ cargo clippy --workspace --all-targets -- -D warnings
 description = "Build the Tauri app and CLI release binaries side-by-side"
 depends = ["frontend:build"]
 run = '''
-cargo build --release -p ccusage-cli -p ccusage-gauge-app
+cargo build --release -p ai-usage-cli -p ai-usage-gauge-app
 '''
 
 [tasks."desktop:run"]
 description = "Build and open the dashboard without a web server"
 depends = ["desktop:build"]
 run = '''
-target/release/ccusage-gauge dashboard
+target/release/ai-usage-gauge dashboard
 '''
 
 [tasks."desktop:test"]
 description = "Test the Tauri desktop app"
 depends = ["frontend:build"]
 run = '''
-cargo test -p ccusage-gauge-app
+cargo test -p ai-usage-gauge-app
 '''
 
 [tasks."frontend:install"]
@@ -180,7 +180,7 @@ scripts/build-homebrew-release.sh "$@"
 '''
 
 [tasks."homebrew:formula"]
-description = "Render Formula/ccusage-gauge.rb from dist/homebrew checksums"
+description = "Render Formula/ai-usage-gauge.rb from dist/homebrew checksums"
 run = '''
 scripts/render-homebrew-formula.sh "$@"
 '''
@@ -193,7 +193,7 @@ if [ -z "$*" ]; then
   echo "usage: mise run homebrew:tap-formula -- <version>" >&2
   exit 2
 fi
-scripts/render-homebrew-formula.sh "$*" "../homebrew-tap/Formula/ccusage-gauge.rb"
+scripts/render-homebrew-formula.sh "$*" "../homebrew-tap/Formula/ai-usage-gauge.rb"
 '''
 
 [tasks."build:homebrew-cask"]
@@ -204,7 +204,7 @@ scripts/build-homebrew-cask-release.sh "$@"
 '''
 
 [tasks."homebrew:cask"]
-description = "Render Casks/ccusage-gauge.rb from dist/homebrew-cask checksums"
+description = "Render Casks/ai-usage-gauge.rb from dist/homebrew-cask checksums"
 run = '''
 scripts/render-homebrew-cask.sh "$@"
 '''
@@ -217,7 +217,7 @@ if [ -z "$*" ]; then
   echo "usage: mise run homebrew:tap-cask -- <version>" >&2
   exit 2
 fi
-scripts/render-homebrew-cask.sh "$*" "../homebrew-tap/Casks/ccusage-gauge.rb"
+scripts/render-homebrew-cask.sh "$*" "../homebrew-tap/Casks/ai-usage-gauge.rb"
 '''
 
 [tasks."release:homebrew-cask-local"]

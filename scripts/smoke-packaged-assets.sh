@@ -15,13 +15,13 @@ case "$layout" in formula|cask|all) ;; *) echo "invalid layout: $layout" >&2; ex
 
 source_assets="$project_root/frontend/dist"
 test -f "$source_assets/index.html"
-if [[ -x "$project_root/target/debug/ccusage-gauge" ]]; then
-  source_binary="$project_root/target/debug/ccusage-gauge"
-elif [[ -x "$project_root/target/release/ccusage-gauge" ]]; then
-  source_binary="$project_root/target/release/ccusage-gauge"
+if [[ -x "$project_root/target/debug/ai-usage-gauge" ]]; then
+  source_binary="$project_root/target/debug/ai-usage-gauge"
+elif [[ -x "$project_root/target/release/ai-usage-gauge" ]]; then
+  source_binary="$project_root/target/release/ai-usage-gauge"
 else
-  cargo build --manifest-path "$project_root/Cargo.toml" -p ccusage-cli >/dev/null
-  source_binary="$project_root/target/debug/ccusage-gauge"
+  cargo build --manifest-path "$project_root/Cargo.toml" -p ai-usage-cli >/dev/null
+  source_binary="$project_root/target/debug/ai-usage-gauge"
 fi
 
 root="$(mktemp -d)"
@@ -29,18 +29,18 @@ pid=""
 cleanup() { if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then kill -TERM "$pid" || true; wait "$pid" || true; fi; rm -rf "$root"; }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$root/config/ccusage-gauge" "$root/state" "$root/cache" "$root/claude" "$root/codex"
-chmod 0700 "$root" "$root/config" "$root/config/ccusage-gauge"
-cat >"$root/config/ccusage-gauge/ccusage-config.json" <<'JSON'
+mkdir -p "$root/config/ai-usage-gauge" "$root/state" "$root/cache" "$root/claude" "$root/codex"
+chmod 0700 "$root" "$root/config" "$root/config/ai-usage-gauge"
+cat >"$root/config/ai-usage-gauge/config.json" <<'JSON'
 {"ccusagePath":null,"defaultResetTerm":"daily","dashboardPort":18082,"dashboardAutostart":false,"pollIntervalSeconds":60}
 JSON
-chmod 0600 "$root/config/ccusage-gauge/ccusage-config.json"
-export CCUSAGE_GAUGE_CONFIG_HOME="$root/config"
-export CCUSAGE_GAUGE_STATE_HOME="$root/state"
-export CCUSAGE_GAUGE_CACHE_HOME="$root/cache"
+chmod 0600 "$root/config/ai-usage-gauge/config.json"
+export AI_USAGE_GAUGE_CONFIG_HOME="$root/config"
+export AI_USAGE_GAUGE_STATE_HOME="$root/state"
+export AI_USAGE_GAUGE_CACHE_HOME="$root/cache"
 export CLAUDE_CONFIG_DIR="$root/claude"
 export CODEX_HOME="$root/codex"
-export CCUSAGE_GAUGE_ANTIGRAVITY_DIR=""
+export AI_USAGE_GAUGE_ANTIGRAVITY_DIR=""
 
 if (exec 3<>/dev/tcp/127.0.0.1/18082) 2>/dev/null; then
   echo "port 18082 is already serving; stop that process before running this smoke" >&2
@@ -56,7 +56,7 @@ probe() {
     code="$(curl -sS -o "$root/body" -w '%{http_code}' http://127.0.0.1:18082/)"
     test "$code" = 503; grep -q assets_missing "$root/body"
   else
-    curl -fsS http://127.0.0.1:18082/ | grep -q ccusage-gauge
+    curl -fsS http://127.0.0.1:18082/ | grep -q ai-usage-gauge
   fi
   kill -TERM "$pid"; wait "$pid" || true; pid=""
   ! curl -fsS http://127.0.0.1:18082/api/health >/dev/null 2>&1
@@ -66,11 +66,11 @@ run_layout() {
   local name="$1" stage="$root/$1"
   case "$name" in
     formula)
-      mkdir -p "$stage/bin"; cp "$source_binary" "$stage/bin/ccusage-gauge"
-      probe "$name" "$stage/bin/ccusage-gauge" "$stage/share/ccusage-gauge/web" ;;
+      mkdir -p "$stage/bin"; cp "$source_binary" "$stage/bin/ai-usage-gauge"
+      probe "$name" "$stage/bin/ai-usage-gauge" "$stage/share/ai-usage-gauge/web" ;;
     cask)
-      mkdir -p "$stage/CCUsageGauge.app/Contents/MacOS"; cp "$source_binary" "$stage/CCUsageGauge.app/Contents/MacOS/ccusage-gauge"
-      probe "$name" "$stage/CCUsageGauge.app/Contents/MacOS/ccusage-gauge" "$stage/CCUsageGauge.app/Contents/Resources/Web" ;;
+      mkdir -p "$stage/AIUsageGauge.app/Contents/MacOS"; cp "$source_binary" "$stage/AIUsageGauge.app/Contents/MacOS/ai-usage-gauge"
+      probe "$name" "$stage/AIUsageGauge.app/Contents/MacOS/ai-usage-gauge" "$stage/AIUsageGauge.app/Contents/Resources/Web" ;;
   esac
 }
 
