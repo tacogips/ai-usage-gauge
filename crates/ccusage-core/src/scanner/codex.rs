@@ -53,8 +53,58 @@ struct TokenUsage {
 fn optional_string<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
-    let value = serde_json::Value::deserialize(deserializer)?;
-    Ok(value.as_str().map(str::to_owned))
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("optional string or ignored json value")
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_owned()))
+        }
+        fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            while map
+                .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                .is_some()
+            {}
+            Ok(None)
+        }
+    }
+    deserializer.deserialize_any(Visitor)
+}
+
+fn contains_codex_record_hint(line: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(line) else {
+        return false;
+    };
+    text.contains("token_count")
+        || text.contains("turn_context")
+        || text.contains("session_meta")
 }
 
 fn directory(value: Option<String>) -> Option<String> {
@@ -123,6 +173,37 @@ fn event(envelope: &Envelope, context: &CodexScanContext) -> Option<TimestampedU
     })
 }
 
+pub fn consume_with_context(
+    context: &mut CodexScanContext,
+    line: &[u8],
+    timezone: Tz,
+) -> Option<(String, TimestampedUsageEvent)> {
+    if !contains_codex_record_hint(line) {
+        return None;
+    }
+    let envelope: Envelope = serde_json::from_slice(line).ok()?;
+    match envelope.kind.as_str() {
+        "session_meta" => update_meta(context, envelope.payload),
+        "turn_context" => {
+            if let Some(model) = envelope.payload.model.filter(|model| !model.is_empty()) {
+                context.model = model;
+                context.effort = effort(envelope.payload.effort);
+            }
+        }
+        "event_msg"
+            if envelope.payload.kind.as_deref() == Some("token_count")
+                && !context.model.is_empty() =>
+        {
+            return Some((
+                day(envelope.timestamp, timezone),
+                event(&envelope, context)?,
+            ));
+        }
+        _ => {}
+    }
+    None
+}
+
 pub struct CodexForwardParser {
     pub context: CodexScanContext,
 }
@@ -137,27 +218,7 @@ impl CodexForwardParser {
         line: &[u8],
         timezone: Tz,
     ) -> Option<(String, TimestampedUsageEvent)> {
-        let envelope: Envelope = serde_json::from_slice(line).ok()?;
-        match envelope.kind.as_str() {
-            "session_meta" => update_meta(&mut self.context, envelope.payload),
-            "turn_context" => {
-                if let Some(model) = envelope.payload.model.filter(|model| !model.is_empty()) {
-                    self.context.model = model;
-                    self.context.effort = effort(envelope.payload.effort);
-                }
-            }
-            "event_msg"
-                if envelope.payload.kind.as_deref() == Some("token_count")
-                    && !self.context.model.is_empty() =>
-            {
-                return Some((
-                    day(envelope.timestamp, timezone),
-                    event(&envelope, &self.context)?,
-                ));
-            }
-            _ => {}
-        }
-        None
+        consume_with_context(&mut self.context, line, timezone)
     }
 }
 
@@ -225,6 +286,23 @@ impl CodexReverseParser {
         }
         if self.stop_requested && self.newest.is_some() {
             return false;
+        }
+        if !contains_codex_record_hint(line) {
+            if !self.stop_requested && self.pending.is_empty() {
+                #[derive(Deserialize)]
+                struct TimestampOnly {
+                    timestamp: DateTime<Utc>,
+                }
+                if let Ok(ts) = serde_json::from_slice::<TimestampOnly>(line) {
+                    if day(ts.timestamp, self.timezone).as_str() < self.since.as_str() {
+                        self.stop_requested = true;
+                        if self.newest.is_some() {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
         }
         let Ok(envelope) = serde_json::from_slice::<Envelope>(line) else {
             return true;

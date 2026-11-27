@@ -8,7 +8,7 @@ use rust_decimal::Decimal;
 
 use crate::aggregation::blocks::{local_midnight_utc, BlockBuilder, BlockContributor};
 use crate::aggregation::buckets::aggregate_events;
-use crate::aggregation::rolling::{days_between, selected_period_cost, RollingInputs};
+use crate::aggregation::rolling::{days_between, selected_period_cost_ref, RollingInputsRef};
 use crate::cache::{events_to_session_buckets, CoverageClassification, UsageAggregationCache};
 use crate::pricing::PricingEngine;
 use crate::scanner::{antigravity, codex::CodexScanContext, LocalUsageScanner, ScanContext};
@@ -124,21 +124,19 @@ impl SnapshotService {
             else {
                 continue;
             };
-            if let Ok(canon) = fs::canonicalize(&item.path) {
-                if let Some(entry) = self.scanner.entries.get(&canon) {
-                    contributors.insert(
-                        canon.clone(),
-                        BlockContributor {
-                            canonical_path: canon.clone(),
-                            file_size: entry.file_size,
-                            modified: entry.modified,
-                            scanned_through: entry.scanned_through,
-                            boundary: entry.boundary.clone(),
-                        },
-                    );
-                }
-                transitions.insert(canon, transition);
+            if let Some(entry) = self.scanner.entries.get(&item.path) {
+                contributors.insert(
+                    item.path.clone(),
+                    BlockContributor {
+                        canonical_path: item.path.clone(),
+                        file_size: entry.file_size,
+                        modified: entry.modified,
+                        scanned_through: entry.scanned_through,
+                        boundary: entry.boundary.clone(),
+                    },
+                );
             }
+            transitions.insert(item.path.clone(), transition);
             for ev in events {
                 insert_dedup(&mut recent_by_id, ev);
             }
@@ -180,10 +178,18 @@ impl SnapshotService {
             .load(now_secs, retention_days, Some(&fingerprint))
             .map_err(|e| format!("cache load failed: {e}"))?;
 
+        let mut recent_by_day: BTreeMap<NaiveDate, Vec<PricedUsageEvent>> = BTreeMap::new();
+        for p in &recent_priced {
+            let d = p.event.timestamp.with_timezone(&tz).date_naive();
+            recent_by_day.entry(d).or_default().push(p.clone());
+        }
+
         let mut legacy_local_days: BTreeSet<String> = BTreeSet::new();
+        let mut wrote_backfill = false;
         let yesterday = today.pred_opt().unwrap_or(today);
         let backfill_start = points_from.min(retention_floor);
         if backfill_start <= yesterday {
+            let mut uncovered_days: Vec<(NaiveDate, String)> = Vec::new();
             for day in days_between(backfill_start, yesterday) {
                 let day_str = day.format("%Y-%m-%d").to_string();
                 let class = self
@@ -199,32 +205,46 @@ impl SnapshotService {
                 ) {
                     legacy_local_days.insert(day_str.clone());
                 }
-                if class == CoverageClassification::NativeComplete {
-                    continue;
+                if class != CoverageClassification::NativeComplete {
+                    uncovered_days.push((day, day_str));
                 }
-                let day_events: Vec<PricedUsageEvent> = if day >= retention_floor {
-                    recent_priced
-                        .iter()
-                        .filter(|p| p.event.timestamp.with_timezone(&tz).date_naive() == day)
-                        .cloned()
-                        .collect()
+            }
+
+            // Batch all uncovered days older than retention_floor into a single historical scan pass.
+            let mut historical_by_day: BTreeMap<NaiveDate, Vec<PricedUsageEvent>> = BTreeMap::new();
+            let old_days: Vec<NaiveDate> = uncovered_days
+                .iter()
+                .map(|(d, _)| *d)
+                .filter(|d| *d < retention_floor)
+                .collect();
+            if let (Some(&min_old), Some(&max_old)) = (old_days.first(), old_days.last()) {
+                let hist_events = scan_historical_range(
+                    &mut self.scanner,
+                    &self.pricing,
+                    &discovered,
+                    min_old,
+                    max_old,
+                    tz,
+                );
+                for ev in hist_events {
+                    let d = ev.event.timestamp.with_timezone(&tz).date_naive();
+                    historical_by_day.entry(d).or_default().push(ev);
+                }
+            }
+
+            for (day, day_str) in uncovered_days {
+                let day_events: &[PricedUsageEvent] = if day >= retention_floor {
+                    recent_by_day.get(&day).map_or(&[], Vec::as_slice)
                 } else {
-                    scan_historical_range(
-                        &mut self.scanner,
-                        &self.pricing,
-                        &discovered,
-                        day,
-                        day,
-                        tz,
-                    )
+                    historical_by_day.get(&day).map_or(&[], Vec::as_slice)
                 };
                 let (day_start, day_end) = local_day_bounds(day, tz);
                 let start_s = day_start.timestamp_millis() as f64 / 1000.0;
                 let end_s = day_end.timestamp_millis() as f64 / 1000.0;
-                let (daily_rows, _) = aggregate_events(&day_events, tz)
+                let (daily_rows, _) = aggregate_events(day_events, tz)
                     .map_err(|e| format!("aggregate_events failed: {e}"))?;
                 let session_inputs =
-                    events_to_session_buckets(&day_events, start_s, end_s, "local")
+                    events_to_session_buckets(day_events, start_s, end_s, "local")
                         .map_err(|e| format!("events_to_session_buckets failed: {e}"))?;
                 self.cache
                     .as_mut()
@@ -239,6 +259,7 @@ impl SnapshotService {
                         generation,
                     )
                     .map_err(|e| format!("merge_day failed: {e}"))?;
+                wrote_backfill = true;
             }
         }
 
@@ -263,20 +284,21 @@ impl SnapshotService {
         }
 
         // 4. Load merged historical daily & session metrics from SQLite + live today aggregates.
-        let loaded = self
-            .cache
-            .as_mut()
-            .expect("opened")
-            .load(now_secs, retention_days, Some(&fingerprint))
-            .map_err(|e| format!("cache reload failed: {e}"))?;
+        // Reuse pre_load directly when no backfill writes occurred.
+        let loaded = if wrote_backfill {
+            self.cache
+                .as_mut()
+                .expect("opened")
+                .load(now_secs, retention_days, Some(&fingerprint))
+                .map_err(|e| format!("cache reload failed: {e}"))?
+        } else {
+            pre_load
+        };
 
-        let today_events: Vec<PricedUsageEvent> = recent_priced
-            .iter()
-            .filter(|p| p.event.timestamp.with_timezone(&tz).date_naive() == today)
-            .cloned()
-            .collect();
+        let today_events: &[PricedUsageEvent] =
+            recent_by_day.get(&today).map_or(&[], Vec::as_slice);
         let (today_daily, today_sessions) =
-            aggregate_events(&today_events, tz).map_err(|e| e.to_owned())?;
+            aggregate_events(today_events, tz).map_err(|e| e.to_owned())?;
 
         let mut all_daily: Vec<MetricRecord> = loaded
             .as_ref()
@@ -338,19 +360,19 @@ impl SnapshotService {
             },
         )?;
 
-        // 6. Compute exact rolling cost using shared selected_period_cost.
+        // 6. Compute exact rolling cost using shared selected_period_cost_ref (borrowing slices).
         let mut rolling_events = recent_priced;
         rolling_events.extend(boundary_priced);
-        let rolling_inputs = RollingInputs {
-            local_raw_events: rolling_events.clone(),
-            daily_metrics: all_daily.clone(),
-            session_metrics: all_sessions.clone(),
-            legacy_local_days,
-            today: today_str,
-            retention_floor: floor_str,
+        let rolling_inputs = RollingInputsRef {
+            local_raw_events: &rolling_events,
+            daily_metrics: &all_daily,
+            session_metrics: &all_sessions,
+            legacy_local_days: &legacy_local_days,
+            today: &today_str,
+            retention_floor: &floor_str,
         };
         let cost_since_reset =
-            selected_period_cost(&state.reset_cycle, interval, &rolling_inputs, &[], tz)
+            selected_period_cost_ref(&state.reset_cycle, interval, &rolling_inputs, &[], tz)
                 .map_err(|e| e.to_owned())?;
         let budget = BudgetSummary::new(cost_since_reset, state.budget_usd);
 
@@ -382,15 +404,18 @@ impl CostSnapshot {
         let today = now.with_timezone(&tz).date_naive();
         let floor = today - Duration::days(RETENTION_LOOKBACK_DAYS);
 
-        let inputs = RollingInputs {
-            local_raw_events: self.rolling_events.clone(),
-            daily_metrics: self.dashboard_metrics.clone(),
-            session_metrics: self.dashboard_sessions.clone(),
-            legacy_local_days: BTreeSet::new(),
-            today: today.format("%Y-%m-%d").to_string(),
-            retention_floor: floor.format("%Y-%m-%d").to_string(),
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let floor_str = floor.format("%Y-%m-%d").to_string();
+        let empty_legacy = BTreeSet::new();
+        let inputs = RollingInputsRef {
+            local_raw_events: &self.rolling_events,
+            daily_metrics: &self.dashboard_metrics,
+            session_metrics: &self.dashboard_sessions,
+            legacy_local_days: &empty_legacy,
+            today: &today_str,
+            retention_floor: &floor_str,
         };
-        let spent = selected_period_cost(&state.reset_cycle, interval, &inputs, &[], tz)
+        let spent = selected_period_cost_ref(&state.reset_cycle, interval, &inputs, &[], tz)
             .unwrap_or(Decimal::ZERO);
 
         Self {
@@ -424,7 +449,7 @@ fn discover_local_files(
     for root in &plan.claude_roots {
         collect_jsonl(root, &mut |path| {
             out.push(DiscoveredFile {
-                path,
+                path: fs::canonicalize(&path).unwrap_or(path),
                 context: ScanContext::Claude,
             });
         });
@@ -432,7 +457,7 @@ fn discover_local_files(
     for root in &plan.codex_roots {
         collect_jsonl(root, &mut |path| {
             out.push(DiscoveredFile {
-                path,
+                path: fs::canonicalize(&path).unwrap_or(path),
                 context: ScanContext::Codex(CodexScanContext::default()),
             });
         });
@@ -443,7 +468,7 @@ fn discover_local_files(
             for (conv_id, path) in transcripts {
                 let directory = workspaces.get(&conv_id).cloned();
                 out.push(DiscoveredFile {
-                    path,
+                    path: fs::canonicalize(&path).unwrap_or(path),
                     context: ScanContext::Antigravity {
                         conversation: conv_id,
                         directory,

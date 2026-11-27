@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::Tz;
-use tokio::sync::Mutex;
 
 use ccusage_core::aggregation::collector::{
     FetchFuture, MachineCollector, MachineSnapshotFetcher, MachineSnapshotStore,
@@ -185,7 +184,7 @@ fn emit_snapshot_error(message: &str, json: bool) {
 }
 
 struct LiveLocalFetcher {
-    service: Mutex<SnapshotService>,
+    service: Arc<std::sync::Mutex<SnapshotService>>,
     state: AppState,
     config: AppConfiguration,
     tz: Tz,
@@ -207,15 +206,24 @@ impl MachineSnapshotFetcher for LiveLocalFetcher {
                     remediation: None,
                 });
             }
-            let mut svc = self.service.lock().await;
-            svc.refresh_local(
-                descriptor,
-                &self.state,
-                &self.config,
-                now,
-                self.tz,
-                desired_from,
-            )
+            let service = self.service.clone();
+            let descriptor = descriptor.clone();
+            let state = self.state.clone();
+            let config = self.config.clone();
+            let tz = self.tz;
+            tokio::task::spawn_blocking(move || {
+                let mut svc = service
+                    .lock()
+                    .map_err(|_| "local snapshot service lock poisoned".to_owned())?;
+                svc.refresh_local(&descriptor, &state, &config, now, tz, desired_from)
+            })
+            .await
+            .map_err(|e| SanitizedCollectionError {
+                code: "cache_failed".into(),
+                message: format!("local snapshot task failed: {e}"),
+                detail: None,
+                remediation: None,
+            })?
             .map_err(|msg| SanitizedCollectionError {
                 code: "cache_failed".into(),
                 message: msg,
@@ -269,12 +277,12 @@ pub async fn run_serve(
         })?;
     let tz = local_timezone();
     let fetcher = Arc::new(LiveLocalFetcher {
-        service: Mutex::new(SnapshotService::new(
+        service: Arc::new(std::sync::Mutex::new(SnapshotService::new(
             cache_path,
             PricingEngine::default(),
             antigravity_root_from_env(&env),
             env,
-        )),
+        ))),
         state: state.clone(),
         config: config.clone(),
         tz,

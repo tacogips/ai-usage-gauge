@@ -115,7 +115,13 @@ impl LocalUsageScanner {
                 self.stats.bytes_read += entry.boundary.len() as u64;
             }
         }
-        let step = file_scan::scan_step(&path, self.entries.get(&path), since, timezone.name())?;
+        let step = file_scan::scan_step_with_meta(
+            &path,
+            &metadata,
+            self.entries.get(&path),
+            since,
+            timezone.name(),
+        )?;
         if step == ScanStep::Reuse {
             self.stats.files_reused += 1;
             let events = self.entries[&path]
@@ -181,12 +187,8 @@ impl LocalUsageScanner {
                             directory.as_deref(),
                         ),
                         ScanContext::Codex(ctx) => {
-                            let mut parser = codex::CodexForwardParser::new(ctx.clone());
-                            let parsed = parser
-                                .consume(line.as_bytes(), timezone)
-                                .map(|(_, event)| event);
-                            *ctx = parser.context;
-                            parsed
+                            codex::consume_with_context(ctx, line.as_bytes(), timezone)
+                                .map(|(_, event)| event)
                         }
                     };
                     if let Some(event) = parsed {

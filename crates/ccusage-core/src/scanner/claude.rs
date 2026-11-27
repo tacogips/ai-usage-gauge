@@ -18,10 +18,10 @@ struct Envelope {
     request_id: Option<String>,
     #[serde(default)]
     cwd: Option<String>,
-    #[serde(default)]
-    effort: serde_json::Value,
-    #[serde(rename = "perTurnEffort", default)]
-    per_turn_effort: serde_json::Value,
+    #[serde(default, deserialize_with = "optional_string")]
+    effort: Option<String>,
+    #[serde(rename = "perTurnEffort", default, deserialize_with = "optional_string")]
+    per_turn_effort: Option<String>,
     message: Message,
 }
 
@@ -59,8 +59,57 @@ fn null_as_zero<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Er
     Ok(Option::<u64>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+fn optional_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("optional string or ignored json value")
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_owned()))
+        }
+        fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            while map
+                .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                .is_some()
+            {}
+            Ok(None)
+        }
+    }
+    deserializer.deserialize_any(Visitor)
+}
+
 /// Decode an assistant usage line; unrelated or malformed JSON is ignored.
 pub fn parse_line(line: &str) -> Option<TimestampedUsageEvent> {
+    if !line.contains("\"assistant\"") || !line.contains("\"usage\"") {
+        return None;
+    }
     let envelope: Envelope = serde_json::from_str(line).ok()?;
     if envelope.kind != "assistant"
         || envelope.message.role != "assistant"
@@ -76,8 +125,8 @@ pub fn parse_line(line: &str) -> Option<TimestampedUsageEvent> {
     let cache = usage.cache_creation.unwrap_or_default();
     let effort = envelope
         .effort
-        .as_str()
-        .or_else(|| envelope.per_turn_effort.as_str())
+        .as_deref()
+        .or(envelope.per_turn_effort.as_deref())
         .and_then(UsageEffort::normalize);
     Some(TimestampedUsageEvent {
         identity,

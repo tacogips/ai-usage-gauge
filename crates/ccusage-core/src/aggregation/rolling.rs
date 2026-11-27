@@ -149,11 +149,41 @@ pub struct RollingInputs {
     pub retention_floor: String,
 }
 
+/// Borrowed inputs for `selected_period_cost_ref`, avoiding snapshot vector clones on hot paths.
+pub struct RollingInputsRef<'a> {
+    pub local_raw_events: &'a [PricedUsageEvent],
+    pub daily_metrics: &'a [MetricRecord],
+    pub session_metrics: &'a [SessionMetricRecord],
+    pub legacy_local_days: &'a BTreeSet<String>,
+    pub today: &'a str,
+    pub retention_floor: &'a str,
+}
+
 /// Compute the exact cost for `(cycle, interval)` using unified per-partition precedence.
 pub fn selected_period_cost(
     cycle: &ResetCycle,
     interval: (DateTime<Utc>, DateTime<Utc>),
     inputs: &RollingInputs,
+    directories: &[String],
+    tz: Tz,
+) -> Result<Decimal, &'static str> {
+    let borrowed = RollingInputsRef {
+        local_raw_events: &inputs.local_raw_events,
+        daily_metrics: &inputs.daily_metrics,
+        session_metrics: &inputs.session_metrics,
+        legacy_local_days: &inputs.legacy_local_days,
+        today: &inputs.today,
+        retention_floor: &inputs.retention_floor,
+    };
+    selected_period_cost_ref(cycle, interval, &borrowed, directories, tz)
+}
+
+/// Zero-copy-input variant of `selected_period_cost` that also prunes rows outside
+/// `[start_day, end_inclusive_day]` before grouping.
+pub fn selected_period_cost_ref(
+    cycle: &ResetCycle,
+    interval: (DateTime<Utc>, DateTime<Utc>),
+    inputs: &RollingInputsRef<'_>,
     directories: &[String],
     tz: Tz,
 ) -> Result<Decimal, &'static str> {
@@ -166,6 +196,8 @@ pub fn selected_period_cost(
     let end_inclusive_day = (end - chrono::Duration::nanoseconds(1))
         .with_timezone(&tz)
         .date_naive();
+    let start_day_str = start_day.format("%Y-%m-%d").to_string();
+    let end_day_str = end_inclusive_day.format("%Y-%m-%d").to_string();
 
     let mut total = Decimal::ZERO;
 
@@ -187,16 +219,15 @@ pub fn selected_period_cost(
         }
     }
 
-    // 2. Local machine: group raw events, cached daily, and cached sessions by (local_day, agent, model).
+    // 2. Local machine: group only rows within [start_day, end_inclusive_day] by (local_day, agent, model).
     let mut raw_by_day_part: BTreeMap<(String, String, String), Vec<PricedUsageEvent>> =
         BTreeMap::new();
-    for ev in &inputs.local_raw_events {
-        let day = ev
-            .event
-            .timestamp
-            .with_timezone(&tz)
-            .format("%Y-%m-%d")
-            .to_string();
+    for ev in inputs.local_raw_events {
+        let local_date = ev.event.timestamp.with_timezone(&tz).date_naive();
+        if local_date < start_day || local_date > end_inclusive_day {
+            continue;
+        }
+        let day = local_date.format("%Y-%m-%d").to_string();
         raw_by_day_part
             .entry((day, ev.event.agent.clone(), ev.event.model.clone()))
             .or_default()
@@ -204,7 +235,11 @@ pub fn selected_period_cost(
     }
     let mut daily_by_day_part: BTreeMap<(String, String, String), Vec<MetricRecord>> =
         BTreeMap::new();
-    for row in inputs.daily_metrics.iter().filter(|r| r.machine == "local") {
+    for row in inputs.daily_metrics.iter().filter(|r| {
+        r.machine == "local"
+            && r.date.as_str() >= start_day_str.as_str()
+            && r.date.as_str() <= end_day_str.as_str()
+    }) {
         daily_by_day_part
             .entry((row.date.clone(), row.agent.clone(), row.model.clone()))
             .or_default()
@@ -217,11 +252,11 @@ pub fn selected_period_cost(
         .iter()
         .filter(|r| r.machine == "local")
     {
-        let day = row
-            .timestamp
-            .with_timezone(&tz)
-            .format("%Y-%m-%d")
-            .to_string();
+        let local_date = row.timestamp.with_timezone(&tz).date_naive();
+        if local_date < start_day || local_date > end_inclusive_day {
+            continue;
+        }
+        let day = local_date.format("%Y-%m-%d").to_string();
         sess_by_day_part
             .entry((day, row.agent.clone(), row.model.clone()))
             .or_default()
@@ -231,11 +266,11 @@ pub fn selected_period_cost(
     let mut day = start_day;
     while day <= end_inclusive_day {
         let day_str = day.format("%Y-%m-%d").to_string();
-        let is_today = day_str == inputs.today;
+        let is_today = day_str.as_str() == inputs.today;
         let is_interior_full_day = matches!(cycle, ResetCycle::CustomHours(_))
             && day > start_day
             && day < end_inclusive_day
-            && day_str < inputs.retention_floor;
+            && day_str.as_str() < inputs.retention_floor;
 
         if is_interior_full_day {
             // Interior completed day strictly between start_day and retention_floor:

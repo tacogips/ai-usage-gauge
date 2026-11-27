@@ -44,6 +44,16 @@ pub fn scan_step<C>(
     timezone_id: &str,
 ) -> io::Result<ScanStep> {
     let meta = fs::metadata(path)?;
+    scan_step_with_meta(path, &meta, entry, since, timezone_id)
+}
+
+pub fn scan_step_with_meta<C>(
+    path: &Path,
+    meta: &fs::Metadata,
+    entry: Option<&UsageEventFileScan<C>>,
+    since: &str,
+    timezone_id: &str,
+) -> io::Result<ScanStep> {
     let Some(entry) = entry else {
         return Ok(ScanStep::Rescan);
     };

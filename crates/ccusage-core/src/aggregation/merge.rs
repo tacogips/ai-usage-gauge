@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use rust_decimal::Decimal;
 
-use crate::aggregation::rolling::{selected_period_cost, RollingInputs};
+use crate::aggregation::rolling::{selected_period_cost_ref, RollingInputsRef};
 use crate::state::ResetWindowCalculator;
 use crate::types::{
     AppState, BudgetSummary, CostRecord, CostSnapshot, DashboardDataDisposition, DashboardScope,
@@ -167,44 +169,47 @@ impl CostSnapshotMerge {
             .format("%Y-%m-%d")
             .to_string();
 
-        // Filter to budgetMachineIDs if configured; otherwise all included machines.
-        let budget_sessions: Vec<SessionMetricRecord> = if state.budget_machine_ids.is_empty() {
-            sessions.clone()
+        // Filter to budgetMachineIDs if configured; otherwise borrow merged slices directly.
+        let empty_legacy = BTreeSet::new();
+        let cost_since_reset = if state.budget_machine_ids.is_empty() {
+            let rolling_inputs = RollingInputsRef {
+                local_raw_events: &rolling_events,
+                daily_metrics: &metrics,
+                session_metrics: &sessions,
+                legacy_local_days: &empty_legacy,
+                today: &today,
+                retention_floor: &floor,
+            };
+            selected_period_cost_ref(&state.reset_cycle, interval, &rolling_inputs, &[], tz)
+                .unwrap_or(Decimal::ZERO)
         } else {
-            sessions
+            let budget_sessions: Vec<SessionMetricRecord> = sessions
                 .iter()
                 .filter(|s| state.budget_machine_ids.contains(&s.machine))
                 .cloned()
-                .collect()
-        };
-        let budget_metrics: Vec<MetricRecord> = if state.budget_machine_ids.is_empty() {
-            metrics.clone()
-        } else {
-            metrics
+                .collect();
+            let budget_metrics: Vec<MetricRecord> = metrics
                 .iter()
                 .filter(|m| state.budget_machine_ids.contains(&m.machine))
                 .cloned()
-                .collect()
+                .collect();
+            let budget_rolling: &[crate::types::PricedUsageEvent] =
+                if state.budget_machine_ids.iter().any(|m| m == "local") {
+                    &rolling_events
+                } else {
+                    &[]
+                };
+            let rolling_inputs = RollingInputsRef {
+                local_raw_events: budget_rolling,
+                daily_metrics: &budget_metrics,
+                session_metrics: &budget_sessions,
+                legacy_local_days: &empty_legacy,
+                today: &today,
+                retention_floor: &floor,
+            };
+            selected_period_cost_ref(&state.reset_cycle, interval, &rolling_inputs, &[], tz)
+                .unwrap_or(Decimal::ZERO)
         };
-        let budget_rolling = if state.budget_machine_ids.is_empty()
-            || state.budget_machine_ids.iter().any(|m| m == "local")
-        {
-            rolling_events.clone()
-        } else {
-            Vec::new()
-        };
-
-        let rolling_inputs = RollingInputs {
-            local_raw_events: budget_rolling,
-            daily_metrics: budget_metrics,
-            session_metrics: budget_sessions,
-            legacy_local_days: Default::default(),
-            today,
-            retention_floor: floor,
-        };
-        let cost_since_reset =
-            selected_period_cost(&state.reset_cycle, interval, &rolling_inputs, &[], tz)
-                .unwrap_or(Decimal::ZERO);
         let budget = BudgetSummary::new(cost_since_reset, state.budget_usd);
 
         let snapshot = CostSnapshot {

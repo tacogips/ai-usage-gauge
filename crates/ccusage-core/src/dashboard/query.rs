@@ -6,7 +6,7 @@ use rust_decimal::Decimal;
 use serde::Serialize;
 
 use crate::aggregation::blocks::local_midnight_utc;
-use crate::aggregation::rolling::{selected_period_cost, RollingInputs};
+use crate::aggregation::rolling::{selected_period_cost_ref, RollingInputsRef};
 use crate::state::ResetWindowCalculator;
 use crate::types::{
     AppState, BudgetSummary, CostRecord, CostSnapshot, MetricRecord, ResetCycle,
@@ -416,52 +416,52 @@ impl DashboardQueryService {
         let floor = today - Duration::days(8);
 
         let local_dirs = dir_filter.local_directories();
-        // If directory filter is active, filter remote sessions by machine-specific directory set.
-        let filtered_sessions: Vec<SessionMetricRecord> = if dir_filter.is_empty() {
-            snapshot.dashboard_sessions.clone()
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let floor_str = floor.format("%Y-%m-%d").to_string();
+        let spent = if dir_filter.is_empty() {
+            let inputs = RollingInputsRef {
+                local_raw_events: &snapshot.rolling_events,
+                daily_metrics: &snapshot.dashboard_metrics,
+                session_metrics: &snapshot.dashboard_sessions,
+                legacy_local_days,
+                today: &today_str,
+                retention_floor: &floor_str,
+            };
+            selected_period_cost_ref(&state.reset_cycle, interval, &inputs, &local_dirs, tz)
+                .unwrap_or(Decimal::ZERO)
         } else {
-            snapshot
+            let include_local = dir_filter.by_machine.contains_key("local");
+            let filtered_sessions: Vec<SessionMetricRecord> = snapshot
                 .dashboard_sessions
                 .iter()
                 .filter(|s| {
                     if s.machine == "local" {
-                        true
+                        include_local
                     } else {
                         dir_filter.matches(&s.machine, s.directory.as_deref())
                     }
                 })
                 .cloned()
-                .collect()
+                .collect();
+            let inputs = RollingInputsRef {
+                local_raw_events: if include_local {
+                    &snapshot.rolling_events
+                } else {
+                    &[]
+                },
+                daily_metrics: if include_local {
+                    &snapshot.dashboard_metrics
+                } else {
+                    &[]
+                },
+                session_metrics: &filtered_sessions,
+                legacy_local_days,
+                today: &today_str,
+                retention_floor: &floor_str,
+            };
+            selected_period_cost_ref(&state.reset_cycle, interval, &inputs, &local_dirs, tz)
+                .unwrap_or(Decimal::ZERO)
         };
-
-        // If directory filter is active and contains NO local machine entries, local contributes $0.
-        let include_local = dir_filter.is_empty() || dir_filter.by_machine.contains_key("local");
-        let inputs = RollingInputs {
-            local_raw_events: if include_local {
-                snapshot.rolling_events.clone()
-            } else {
-                vec![]
-            },
-            daily_metrics: if include_local {
-                snapshot.dashboard_metrics.clone()
-            } else {
-                vec![]
-            },
-            session_metrics: if include_local {
-                filtered_sessions
-            } else {
-                filtered_sessions
-                    .into_iter()
-                    .filter(|s| s.machine != "local")
-                    .collect()
-            },
-            legacy_local_days: legacy_local_days.clone(),
-            today: today.format("%Y-%m-%d").to_string(),
-            retention_floor: floor.format("%Y-%m-%d").to_string(),
-        };
-
-        let spent = selected_period_cost(&state.reset_cycle, interval, &inputs, &local_dirs, tz)
-            .unwrap_or(Decimal::ZERO);
 
         BudgetApiResponse {
             generated_at: snapshot.generated_at,

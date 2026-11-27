@@ -269,7 +269,7 @@ impl MachineSnapshotStore {
 pub struct MachineCollector {
     pub store: MachineSnapshotStore,
     fetcher: Arc<dyn MachineSnapshotFetcher>,
-    in_flight: Mutex<HashMap<String, Arc<Notify>>>,
+    in_flight: Arc<Mutex<HashMap<String, Arc<Notify>>>>,
     refresh_interval_seconds: u32,
 }
 
@@ -282,7 +282,7 @@ impl MachineCollector {
         Self {
             store,
             fetcher,
-            in_flight: Mutex::new(HashMap::new()),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
             refresh_interval_seconds,
         }
     }
@@ -295,50 +295,34 @@ impl MachineCollector {
         desired_from: Option<NaiveDate>,
         now: DateTime<Utc>,
     ) -> bool {
-        let (notify, is_leader) = {
-            let mut map = self.in_flight.lock().await;
-            if let Some(existing) = map.get(machine_id) {
-                (existing.clone(), false)
-            } else {
-                let n = Arc::new(Notify::new());
-                map.insert(machine_id.to_owned(), n.clone());
-                (n, true)
-            }
-        };
-
-        if !is_leader {
-            notify.notified().await;
-            return true;
-        }
-
-        let result =
-            if let Some((descriptor, gen)) = self.store.begin_attempt(machine_id, now).await {
-                match self.fetcher.fetch(&descriptor, desired_from, now).await {
-                    Ok(snap) => self.store.commit_success(machine_id, gen, snap, now).await,
-                    Err(err) => {
-                        self.store.commit_failure(machine_id, gen, err, now).await;
-                        false
-                    }
-                }
-            } else {
-                false
-            };
-
-        {
-            let mut map = self.in_flight.lock().await;
-            map.remove(machine_id);
-        }
-        notify.notify_waiters();
-        result
+        refresh_machine_inner(
+            self.store.clone(),
+            self.fetcher.clone(),
+            self.in_flight.clone(),
+            machine_id.to_owned(),
+            desired_from,
+            now,
+        )
+        .await
     }
 
     pub async fn refresh_all(&self, desired_from: Option<NaiveDate>, now: DateTime<Utc>) {
         let ids = self.store.enabled_machine_ids().await;
-        let handles: Vec<_> = ids
-            .iter()
-            .map(|id| self.refresh_machine(id, desired_from, now))
-            .collect();
-        futures_join_all(handles).await;
+        let mut join_set = tokio::task::JoinSet::new();
+        for id in ids {
+            let store = self.store.clone();
+            let fetcher = self.fetcher.clone();
+            let in_flight = self.in_flight.clone();
+            join_set.spawn(refresh_machine_inner(
+                store,
+                fetcher,
+                in_flight,
+                id,
+                desired_from,
+                now,
+            ));
+        }
+        while join_set.join_next().await.is_some() {}
     }
 
     pub async fn load_range(
@@ -362,15 +346,40 @@ impl MachineCollector {
         };
         self.store.set_range_progress(Some(progress.clone())).await;
 
+        let mut join_set = tokio::task::JoinSet::new();
         for id in ids {
-            let ok = self.refresh_machine(&id, desired_from, now).await;
+            let store = self.store.clone();
+            let fetcher = self.fetcher.clone();
+            let in_flight = self.in_flight.clone();
+            join_set.spawn(async move {
+                let ok = refresh_machine_inner(
+                    store,
+                    fetcher,
+                    in_flight,
+                    id.clone(),
+                    desired_from,
+                    now,
+                )
+                .await;
+                (id, ok)
+            });
+        }
+        while let Some(res) = join_set.join_next().await {
             progress.completed += 1;
-            if !ok {
-                progress.failed_machine_ids.push(id);
-                progress.is_partial = true;
+            match res {
+                Ok((id, ok)) => {
+                    if !ok {
+                        progress.failed_machine_ids.push(id);
+                        progress.is_partial = true;
+                    }
+                }
+                Err(_) => {
+                    progress.is_partial = true;
+                }
             }
             self.store.set_range_progress(Some(progress.clone())).await;
         }
+        progress.failed_machine_ids.sort();
         progress.is_loading = false;
         self.store.set_range_progress(Some(progress.clone())).await;
         progress
@@ -437,10 +446,46 @@ impl PollingService {
     }
 }
 
-async fn futures_join_all<F: Future>(futs: Vec<F>) -> Vec<F::Output> {
-    let mut out = Vec::with_capacity(futs.len());
-    for f in futs {
-        out.push(f.await);
+async fn refresh_machine_inner(
+    store: MachineSnapshotStore,
+    fetcher: Arc<dyn MachineSnapshotFetcher>,
+    in_flight: Arc<Mutex<HashMap<String, Arc<Notify>>>>,
+    machine_id: String,
+    desired_from: Option<NaiveDate>,
+    now: DateTime<Utc>,
+) -> bool {
+    let (notify, is_leader) = {
+        let mut map = in_flight.lock().await;
+        if let Some(existing) = map.get(&machine_id) {
+            (existing.clone(), false)
+        } else {
+            let n = Arc::new(Notify::new());
+            map.insert(machine_id.clone(), n.clone());
+            (n, true)
+        }
+    };
+
+    if !is_leader {
+        notify.notified().await;
+        return true;
     }
-    out
+
+    let result = if let Some((descriptor, gen)) = store.begin_attempt(&machine_id, now).await {
+        match fetcher.fetch(&descriptor, desired_from, now).await {
+            Ok(snap) => store.commit_success(&machine_id, gen, snap, now).await,
+            Err(err) => {
+                store.commit_failure(&machine_id, gen, err, now).await;
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    {
+        let mut map = in_flight.lock().await;
+        map.remove(&machine_id);
+    }
+    notify.notify_waiters();
+    result
 }

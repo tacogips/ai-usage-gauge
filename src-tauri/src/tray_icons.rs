@@ -186,6 +186,7 @@ pub struct TrayIconRenderer {
     pub claude: Artwork,
     pub codex: Artwork,
     pub gemini: Artwork,
+    warning_mask: Vec<u8>,
 }
 impl Default for TrayIconRenderer {
     fn default() -> Self {
@@ -198,6 +199,7 @@ impl TrayIconRenderer {
             claude: png_art(include_bytes!("../assets/claude-template.png")),
             codex: png_art(include_bytes!("../assets/chatgpt-template.png")),
             gemini: gemini_art(),
+            warning_mask: render_warning_mask(),
         }
     }
     pub fn render_strip(&self, state: &TrayRenderState) -> Option<RenderedTrayIcon> {
@@ -224,15 +226,22 @@ impl TrayIconRenderer {
         let mut x = 0;
         for e in entries {
             if e.show_icon {
-                let alpha = if e.id == PieChartId::Budget {
-                    budget(e, state.is_usage_unavailable || state.has_warnings)
+                let alpha_owned;
+                let alpha: &[u8] = if e.id == PieChartId::Budget {
+                    if state.is_usage_unavailable || state.has_warnings {
+                        &self.warning_mask
+                    } else {
+                        alpha_owned = budget(e);
+                        &alpha_owned
+                    }
                 } else {
-                    match e.id.provider() {
+                    alpha_owned = match e.id.provider() {
                         Some(RateLimitProvider::Claude) => &self.claude,
                         Some(RateLimitProvider::Gemini) => &self.gemini,
                         _ => &self.codex,
                     }
-                    .render(e.fraction)
+                    .render(e.fraction);
+                    &alpha_owned
                 };
                 for y in 0..N {
                     for col in 0..N {
@@ -257,7 +266,7 @@ impl TrayIconRenderer {
         })
     }
 }
-fn budget(e: &MenuBarStatusEntry, warning: bool) -> Vec<u8> {
+fn render_warning_mask() -> Vec<u8> {
     let mut out = vec![0; N * N];
     for y in 0..N {
         for x in 0..N {
@@ -266,47 +275,57 @@ fn budget(e: &MenuBarStatusEntry, warning: bool) -> Vec<u8> {
                 for sx in 0..4 {
                     let px = x as f64 + (sx as f64 + 0.5) / 4.0;
                     let py = y as f64 + (sy as f64 + 0.5) / 4.0;
-                    let a = if warning {
-                        let edge = |ax: f64, ay: f64, bx: f64, by: f64| {
-                            let dx = bx - ax;
-                            let dy = by - ay;
-                            let t = (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy))
-                                .clamp(0.0, 1.0);
-                            ((px - ax - t * dx).powi(2) + (py - ay - t * dy).powi(2)).sqrt() < 1.5
-                        };
-                        if edge(18.0, 3.0, 34.0, 33.0)
-                            || edge(34.0, 33.0, 2.0, 33.0)
-                            || edge(2.0, 33.0, 18.0, 3.0)
-                            || (px - 18.0).abs() < 1.6 && (15.0..26.0).contains(&py)
-                            || (px - 18.0).abs() < 1.8 && (28.0..32.0).contains(&py)
+                    let edge = |ax: f64, ay: f64, bx: f64, by: f64| {
+                        let dx = bx - ax;
+                        let dy = by - ay;
+                        let t = (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy))
+                            .clamp(0.0, 1.0);
+                        ((px - ax - t * dx).powi(2) + (py - ay - t * dy).powi(2)).sqrt() < 1.5
+                    };
+                    if edge(18.0, 3.0, 34.0, 33.0)
+                        || edge(34.0, 33.0, 2.0, 33.0)
+                        || edge(2.0, 33.0, 18.0, 3.0)
+                        || (px - 18.0).abs() < 1.6 && (15.0..26.0).contains(&py)
+                        || (px - 18.0).abs() < 1.8 && (28.0..32.0).contains(&py)
+                    {
+                        sum += 1.0;
+                    }
+                }
+            }
+            out[y * N + x] = (sum / 16.0 * 255.0_f64).round() as u8;
+        }
+    }
+    out
+}
+
+fn budget(e: &MenuBarStatusEntry) -> Vec<u8> {
+    let f = if e.is_budget_unset {
+        0.0
+    } else if e.is_budget_unknown {
+        0.25
+    } else {
+        normalize(e.fraction.unwrap_or(0.0))
+    };
+    let mut out = vec![0; N * N];
+    for y in 0..N {
+        for x in 0..N {
+            let mut sum = 0.0;
+            for sy in 0..4 {
+                for sx in 0..4 {
+                    let px = x as f64 + (sx as f64 + 0.5) / 4.0;
+                    let py = y as f64 + (sy as f64 + 0.5) / 4.0;
+                    let dx = px - 18.0;
+                    let dy = py - 18.0;
+                    if dx * dx + dy * dy <= 196.0 {
+                        let angle = dx.atan2(-dy).rem_euclid(std::f64::consts::TAU)
+                            / std::f64::consts::TAU;
+                        sum += if angle < f || e.is_budget_unset && dx.abs() < 1.5 && dy.abs() < 10.0
                         {
                             1.0
                         } else {
-                            0.0
-                        }
-                    } else {
-                        let dx = px - 18.0;
-                        let dy = py - 18.0;
-                        if dx * dx + dy * dy > 196.0 {
-                            0.0
-                        } else {
-                            let f = if e.is_budget_unset {
-                                0.0
-                            } else if e.is_budget_unknown {
-                                0.25
-                            } else {
-                                normalize(e.fraction.unwrap_or(0.0))
-                            };
-                            let angle = dx.atan2(-dy).rem_euclid(std::f64::consts::TAU)
-                                / std::f64::consts::TAU;
-                            if angle < f || e.is_budget_unset && dx.abs() < 1.5 && dy.abs() < 10.0 {
-                                1.0
-                            } else {
-                                0.35
-                            }
-                        }
-                    };
-                    sum += a;
+                            0.35
+                        };
+                    }
                 }
             }
             out[y * N + x] = (sum / 16.0 * 255.0_f64).round() as u8;
