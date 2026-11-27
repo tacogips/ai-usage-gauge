@@ -32,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "ai-usage-cli"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "ai-usage-core",
  "chrono",
@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "ai-usage-core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "ai-usage-gauge-app"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "ai-usage-core",
  "chrono",
