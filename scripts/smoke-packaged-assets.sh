@@ -11,30 +11,37 @@ while (($#)); do
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
-case "$layout" in swiftpm|formula|cask|all) ;; *) echo "invalid layout: $layout" >&2; exit 2 ;; esac
+case "$layout" in formula|cask|all) ;; *) echo "invalid layout: $layout" >&2; exit 2 ;; esac
 
 source_assets="$project_root/frontend/dist"
 test -f "$source_assets/index.html"
-build_dir="$(swift build --show-bin-path)"
-source_binary="$build_dir/ccusage-gauge"
+if [[ -x "$project_root/target/debug/ccusage-gauge" ]]; then
+  source_binary="$project_root/target/debug/ccusage-gauge"
+elif [[ -x "$project_root/target/release/ccusage-gauge" ]]; then
+  source_binary="$project_root/target/release/ccusage-gauge"
+else
+  cargo build --manifest-path "$project_root/Cargo.toml" -p ccusage-cli >/dev/null
+  source_binary="$project_root/target/debug/ccusage-gauge"
+fi
+
 root="$(mktemp -d)"
 pid=""
 cleanup() { if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then kill -TERM "$pid" || true; wait "$pid" || true; fi; rm -rf "$root"; }
 trap cleanup EXIT INT TERM
 
-fake="$root/ccusage"
-printf '%s\n' '#!/usr/bin/env bash' "printf '%s' '{\"blocks\":[]}'" >"$fake"
-chmod +x "$fake"
-mkdir -p "$root/config/ccusage-gauge"
+mkdir -p "$root/config/ccusage-gauge" "$root/state" "$root/cache" "$root/claude" "$root/codex"
 chmod 0700 "$root" "$root/config" "$root/config/ccusage-gauge"
-cat >"$root/config/ccusage-gauge/ccusage-config.json" <<JSON
-{"ccusagePath":"$fake","defaultResetTerm":"daily","dashboardPort":18082,"dashboardAutostart":false,"pollIntervalSeconds":60}
+cat >"$root/config/ccusage-gauge/ccusage-config.json" <<'JSON'
+{"ccusagePath":null,"defaultResetTerm":"daily","dashboardPort":18082,"dashboardAutostart":false,"pollIntervalSeconds":60}
 JSON
 chmod 0600 "$root/config/ccusage-gauge/ccusage-config.json"
-export CCUSAGE_GAUGE_CONFIG_HOME="$root/config" CCUSAGE_GAUGE_STATE_HOME="$root/state"
+export CCUSAGE_GAUGE_CONFIG_HOME="$root/config"
+export CCUSAGE_GAUGE_STATE_HOME="$root/state"
+export CCUSAGE_GAUGE_CACHE_HOME="$root/cache"
+export CLAUDE_CONFIG_DIR="$root/claude"
+export CODEX_HOME="$root/codex"
+export CCUSAGE_GAUGE_ANTIGRAVITY_DIR=""
 
-# Another dashboard on this port would answer the probes below instead of the
-# staged layout, so refuse to run rather than report its behaviour.
 if (exec 3<>/dev/tcp/127.0.0.1/18082) 2>/dev/null; then
   echo "port 18082 is already serving; stop that process before running this smoke" >&2
   exit 1
@@ -51,16 +58,13 @@ probe() {
   else
     curl -fsS http://127.0.0.1:18082/ | grep -q ccusage-gauge
   fi
-  kill -TERM "$pid"; wait "$pid"; pid=""
+  kill -TERM "$pid"; wait "$pid" || true; pid=""
   ! curl -fsS http://127.0.0.1:18082/api/health >/dev/null 2>&1
 }
 
 run_layout() {
   local name="$1" stage="$root/$1"
   case "$name" in
-    swiftpm)
-      mkdir -p "$stage/bin"; cp "$source_binary" "$stage/bin/ccusage-gauge"
-      probe "$name" "$stage/bin/ccusage-gauge" "$stage/bin/ccusage-gauge_ccusage-gauge.bundle/Web" ;;
     formula)
       mkdir -p "$stage/bin"; cp "$source_binary" "$stage/bin/ccusage-gauge"
       probe "$name" "$stage/bin/ccusage-gauge" "$stage/share/ccusage-gauge/web" ;;
@@ -70,5 +74,5 @@ run_layout() {
   esac
 }
 
-if [[ "$layout" = all ]]; then for value in swiftpm formula cask; do run_layout "$value"; done; else run_layout "$layout"; fi
+if [[ "$layout" = all ]]; then for value in formula cask; do run_layout "$value"; done; else run_layout "$layout"; fi
 echo "packaged asset smoke passed: layout=$layout missing=$missing"

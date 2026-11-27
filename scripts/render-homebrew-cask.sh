@@ -13,49 +13,27 @@ Usage:
 
 Reads archive checksums from:
   dist/homebrew-cask/$artifact_name-<version>-<target>.dmg.sha256
-
-Environment:
-  CASK_RELEASE_DIR       Directory containing archives and .sha256 files.
-  CASK_RELEASE_BASE_URL  Release URL base. Defaults to GitHub v<version>.
-
-Example:
-  scripts/build-homebrew-cask-release.sh darwin-arm64 darwin-x64
-  scripts/render-homebrew-cask.sh 0.1.0 ../homebrew-tap/Casks/$artifact_name.rb
-
-This renderer expects signed, notarized, and stapled macOS .dmg artifacts.
 EOF
 }
 
 sha_for_target() {
-  local version target release_dir sha_file
-  version="$1"
-  target="$2"
-  release_dir="$3"
-  sha_file="$release_dir/$artifact_name-$version-$target.dmg.sha256"
-
+  local version="$1" target="$2" release_dir="$3"
+  local sha_file="$release_dir/$artifact_name-$version-$target.dmg.sha256"
   if [[ ! -f "$sha_file" ]]; then
     printf 'missing checksum file: %s\n' "$sha_file" >&2
     return 1
   fi
-
   awk '{print $1}' "$sha_file"
 }
 
 main() {
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    usage
-    return
-  fi
-  if [[ "${1:-}" == "" ]]; then
-    usage
-    return 2
-  fi
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then usage; return; fi
+  if [[ "${1:-}" == "" ]]; then usage; return 2; fi
 
-  local version output release_dir release_base_url
-  version="$1"
-  output="${2:-$repo_root/Casks/$artifact_name.rb}"
-  release_dir="${CASK_RELEASE_DIR:-$repo_root/dist/homebrew-cask}"
-  release_base_url="${CASK_RELEASE_BASE_URL:-https://github.com/tacogips/ccusage-gauge/releases/download/v$version}"
+  local version="$1"
+  local output="${2:-$repo_root/Casks/$artifact_name.rb}"
+  local release_dir="${CASK_RELEASE_DIR:-$repo_root/dist/homebrew-cask}"
+  local release_base_url="${CASK_RELEASE_BASE_URL:-https://github.com/tacogips/ccusage-gauge/releases/download/v$version}"
 
   local darwin_arm64_sha darwin_x64_sha
   darwin_arm64_sha="$(sha_for_target "$version" darwin-arm64 "$release_dir")"
@@ -72,7 +50,7 @@ cask "ccusage-gauge" do
 
   url "$release_base_url/$artifact_name-#{version}-#{arch}.dmg"
   name "CCUsage Gauge"
-  desc "Menu bar gauge for Claude Code and Codex subscription limits, credits, and costs"
+  desc "Menu bar gauge for Claude Code, Codex, and Antigravity subscription limits, credits, and costs"
   homepage "https://github.com/tacogips/ccusage-gauge"
 
   livecheck do
@@ -84,14 +62,11 @@ cask "ccusage-gauge" do
 
   app "CCUsageGauge.app"
   binary "#{appdir}/CCUsageGauge.app/Contents/MacOS/$product", target: "$product"
-  binary "#{appdir}/CCUsageGauge.app/Contents/Helpers/" \\
-         "CCUsageGaugeDashboard.app/Contents/MacOS/ccusage-gauge-dashboard",
-         target: "ccusage-gauge-dashboard"
 
   caveats do
     <<~EOS
       The app and native dashboard are signed and notarized with Apple Developer ID.
-      Install ccusage separately and configure its path if it is not discoverable.
+      Local usage is computed natively in Rust without requiring a local ccusage CLI.
     EOS
   end
 end

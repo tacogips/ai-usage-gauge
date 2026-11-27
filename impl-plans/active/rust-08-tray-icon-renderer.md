@@ -79,3 +79,10 @@ Done when both commands exit `0` and all rasterization, area-proportional fill, 
 ## Progress Log
 
 Record progress in a dedicated worker progress note; read each target file fresh before editing, capture pre/post content hashes to detect unexpected drift, never modify `impl-plans/active/` or run concurrent git operations, and keep all edits strictly within `writePaths`.
+
+- Implementation: extracted both original provider PNGs; added the 36px template renderer, bottom-up interior-area fill, budget states, deterministic ratio glyphs, canonical strip layout, and independent presentation deduplication. The integration tests cover masks, geometry, unavailable states, layout and deduplication.
+- Implementation verification: `rustfmt --check src-tauri/src/tray_icons.rs src-tauri/tests/tray_icons_tests.rs` exited 0; `CARGO_TARGET_DIR=tmp/cargo-target/rust-08-tray-icon-renderer cargo test --locked -p ccusage-gauge-app --test tray_icons_tests` exited 0 (4 passed, 0 failed). Complete logs are in `tmp/rust-tauri-migration-20261126/rust-08-tray-icon-renderer/`.
+- Formal review remains downstream; tray integration belongs to rust-12 and workspace clippy to the serial join.
+- Review revision `rust-08-missing-decimal-point-glyph`: added a baseline decimal glyph and a fractional budget label regression. The regression reproduced the missing dot before the fix (exit 101); after the fix, the required rustfmt check exited 0 and locked tray icon tests passed 5/5. Logs: `tmp/rust-tauri-migration-20261126/rust-08-tray-icon-renderer/revision-{negative,rustfmt,test}.log`. Independent re-review remains pending.
+
+- Integration review repair `INT-WAVE5-RUST08-CLIPPY`: replaced five constant-size RGBA chunk iterators with `as_chunks::<4>().0.iter()`, preserving assertions and pixel semantics. Scoped rustfmt and offline locked app Clippy exited 0; locked tray icon tests passed 5/5. Complete logs: `clippy-repair-rustfmt.log`, `clippy-repair-test.log`, and `clippy-repair-final.log` in the plan evidence directory. Independent review remains downstream.

@@ -109,3 +109,32 @@ Record progress in a dedicated worker progress note; read each target file fresh
 - Current isolated Cargo integration test passed 7 tests with offline dependency access; complete log: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/test-step6-final.log`.
 - The exact required standalone rustfmt command still exits 1 because it defaults to Rust 2015 and cannot parse async functions; complete log: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/rustfmt-step6-final.log`. A checkpoint amendment must correct the command to specify the workspace edition or authorize an applicable configuration outside the current write scope.
 - Implementation remains incomplete: remote probing, normalized fingerprints, partial local PATCH, deletion compensation, deterministic coalescing, and the broader required behavioral tests remain outstanding. Formal review and workflow finalization are downstream.
+
+### Redispatch progress (2026-11-27)
+
+- Normalized configured source paths in fingerprints, added partial local source mutation under the owner lock, made coalesced output ordering deterministic, and prevented cancellation of deletion metadata when persistence rollback fails. Added three regression tests for fingerprints, partial local updates, and point ordering.
+- The amended edition-2021 rustfmt gate passed; the isolated locked remote integration suite passed 10 tests. Complete logs: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/redispatch-20261127-rustfmt.log` and `redispatch-20261127-test.log` in the same directory.
+- Completion remains open: the fixed SSH source probe execution and decoding are absent, and the assigned registry, mutation compensation, SSH adapters, and decoder behavior still require comprehensive regression coverage. Formal review and workflow finalization remain downstream.
+
+### Implementation continuation 1 (2026-11-27)
+
+- Implemented the fixed positional SSH source probe, strict NUL-delimited decoding, captured execution values, unavailable-source state, and empty-plan shortcut. Added bounded transport-only retries for sourced invocations and probes. Aligned runner option handling with registry validation.
+- Added integration coverage for probe execution and malformed output, source aliases and environment precedence, registry link safety and migration failure, serialized local mutations, failed deletion compensation, jump arguments, sanitized diagnostics, source retries, and subprocess exit/timeout classification.
+- The edition-2021 rustfmt gate and isolated locked remote integration suite passed; complete logs are `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/continuation1-final2-rustfmt.log` and `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/continuation1-final2-test.log`. The suite ran 19 tests with zero failures. These checks ran on the shared tree; formal reviews and workflow finalization remain downstream.
+
+### Test-integrity revisions (2026-11-27)
+
+- R07-TI-001: reused registry file-safety checks immediately before SSH launch and enforced registry connection validation in argv construction. Added direct, jump, command, per-agent isolation, and unsafe-file regression checks.
+- R07-TI-002: added CRUD, local conflict, recoverable deletion rollback, and metadata cleanup retry checks. R07-TI-003: added concrete decoder, coalescing, provenance, and empty daily fallback checks. The added tests live in `crates/ccusage-core/src/remote/integration_regressions.rs` and are included by `remote_ssh_tests.rs` to keep Rust files under 1000 lines.
+- Current scoped gates passed on the shared tree: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/ti-final-rustfmt.log` and `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/ti-final-test.log` (26 tests, zero failures). Independent review and workflow finalization remain downstream.
+
+### Adversarial review revisions (2026-11-27)
+
+- R07-ADV-001 and 002: reject null known-hosts destinations, percent placeholders in SSH paths, and relative multi-component remote executable paths at registry and runner boundaries.
+- R07-ADV-003: fail all latched mutations before validation or closures and report the triggering save-plus-cancellation failure correctly. R07-ADV-004: normalize bounded diagnostics and restore the specified matching phrases and public text.
+- Scoped verification passed on the shared tree: `tmp/rust-tauri-migration-20261126/rust-07-remote-ssh-registry/adv-final-rustfmt.log`, `adv-final-test.log` (30 tests), `adv-final-offline-test.log` (30 tests), and `adv-final-lib.log` (5 tests), all in the same evidence directory. Independent re-review remains downstream.
+
+### Integration review repairs (2026-11-27)
+
+- Replaced shadow lifecycle and runtime traits with the pinned shared contracts; serialized asynchronous reconciliation now carries monotonic revisions and preserves deletion metadata during compensation. Added real-store regression coverage and resolved scoped SSH probe Clippy diagnostics.
+- Final scoped verification and its outcomes are recorded in the plan-local integration repair logs. Independent integration review and workflow finalization remain downstream.

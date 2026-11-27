@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = ["crates/ccusage-core", "crates/ccusage-cli", "src-tauri"]
+
+[workspace.package]
+version = "0.5.1"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+rust_decimal = { version = "1", features = ["serde", "serde-with-float", "serde-with-str"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+iana-time-zone = "0.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "http1"] }
+http-body-util = "0.1"
+portable-pty = "0.9"
+libc = "0.2"
+uuid = { version = "1", features = ["v4"] }
+thiserror = "2"
+percent-encoding = "2"
+url = "2"
+sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
+png = "0.17"
+tiny-skia = "0.11"
+tauri = { version = "2", features = ["custom-protocol", "tray-icon"] }
+tauri-build = "2"
+tempfile = "3"

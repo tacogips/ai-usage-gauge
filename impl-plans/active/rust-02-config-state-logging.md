@@ -86,3 +86,20 @@ Done when both commands exit `0`, all config, state, reset-window, pie-selection
 ## Progress Log
 
 Record progress in a dedicated worker progress note; read each target file fresh before editing, capture pre/post content hashes to detect unexpected drift, never modify `impl-plans/active/` or run concurrent git operations, and keep all edits strictly within `writePaths`.
+
+### Implementation progress 2026-11-27
+
+- Added config and state persistence, reset-window and budget calculations, pie selection, and a lazy bootstrap logger with integration tests under this plan's paths.
+- Scoped rustfmt check passed; all authored Rust files are under 1000 lines.
+- The final locked integration test passed: 8 tests, 0 failures. An earlier attempt encountered a sibling `remote/mutation_owner.rs` compilation error that cleared before the final rerun. Independent reviews remain pending.
+
+### Continuation progress
+
+- Redacted caller-supplied free-form log messages by default while preserving the fixed fallback diagnostic; structured fields retain their existing sanitization.
+- Added tests for an unlabelled credential, oversized input, 10 MiB rotation, and the Sunday-to-Monday boundary. The scoped locked test passed 11 tests with no failures and rustfmt passed. Independent reviews remain pending.
+
+### Adversarial review revision
+
+- Rotation now performs best-effort retention cleanup under the existing lock and avoids occupied destination names including dangling symlinks.
+- Midnight DST gaps resolve to the first valid local instant; Havana spring-forward and New York fall-back regressions pass.
+- Both regressions failed before their fixes and the final scoped suite passed 13 tests; rustfmt and file-length checks passed. Independent re-review remains pending.

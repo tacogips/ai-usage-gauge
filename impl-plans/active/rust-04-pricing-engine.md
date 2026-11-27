@@ -111,3 +111,7 @@ Offline locked pricing tests passed again (3 passed, 0 failed; `step6-cargo-fina
 ### Current shared-tree verification rerun (2026-11-27)
 
 The locked offline pricing tests passed (3 passed, 0 failed; `step6-current-test.log`). The exact standalone `rustfmt --check` failed because it parses async syntax as Rust 2015 (`step6-current-rustfmt.log`); the same check with `--edition 2021` passed (`step6-current-rustfmt-edition.log`). The exact acceptance gate requires an amended command or an authorized formatter configuration covering both source and tests. Independent review and workflow finalization remain downstream.
+
+### Amended-gate redispatch (2026-11-27)
+
+The edition amendment resolves the prior formatter blocker. Added an offline stale-cache replacement regression test. Final shared-tree verification uses the amended edition-2021 formatter gate and the locked offline pricing suite; complete results are recorded in `redispatch-final-rustfmt.log` and `redispatch-final-test.log` under the plan evidence directory. Formal reviews and workflow finalization remain downstream.

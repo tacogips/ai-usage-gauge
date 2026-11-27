@@ -1,4 +1,0 @@
-module CPTY [system] {
-  header "shim.h"
-  export *
-}

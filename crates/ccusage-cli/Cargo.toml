@@ -1,0 +1,24 @@
+[package]
+name = "ccusage-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ccusage-gauge"
+path = "src/main.rs"
+
+[dependencies]
+ccusage-core = { path = "../ccusage-core" }
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+iana-time-zone.workspace = true
+rust_decimal.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rusqlite.workspace = true

@@ -46,3 +46,5 @@ deploy/emulation/.runtime/
 .riela/retention/
 
 mise.local.toml
+
+/target/

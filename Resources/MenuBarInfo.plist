@@ -4,14 +4,14 @@
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleDisplayName</key><string>CCUsage Gauge</string>
-  <key>CFBundleExecutable</key><string>ccusage-gauge-menubar</string>
+  <key>CFBundleExecutable</key><string>ccusage-gauge-app</string>
   <key>CFBundleIdentifier</key><string>com.tacogips.ccusage-gauge</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>CCUsageGauge</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.2.0</string>
-  <key>CFBundleVersion</key><string>0.2.0</string>
+  <key>CFBundleShortVersionString</key><string>0.5.1</string>
+  <key>CFBundleVersion</key><string>0.5.1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSMultipleInstancesProhibited</key><true/>
   <key>LSUIElement</key><true/>

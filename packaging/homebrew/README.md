@@ -1,12 +1,11 @@
 # Homebrew Packaging
 
-This project ships two Homebrew release paths:
+This project ships two Homebrew release paths built from the Rust and Tauri v2 workspace:
 
-- Formula: unsigned tarballs containing `bin/ccusage-gauge`.
-- Cask: signed, notarized, and stapled macOS DMGs containing the command line tool.
+- Formula: unsigned tarballs containing `bin/ccusage-gauge`, `bin/ccusage-gauge-app`, and `share/ccusage-gauge/web`.
+- Cask: signed, notarized, and stapled macOS DMGs containing `CCUsageGauge.app` (`Contents/MacOS/ccusage-gauge-app`, `Contents/MacOS/ccusage-gauge`, and `Contents/Resources/Web`, with no nested helper app bundle) and exposing the `ccusage-gauge` CLI binary.
 
-Swift formula archives are macOS-only by default. Add Linux archives only after
-the project has a reviewed Swift Linux build and runtime contract.
+Formula archives are macOS-only by default (`darwin-arm64`, `darwin-x64`). Linux CLI/server binaries are built separately in CI.
 
 ## Formula
 

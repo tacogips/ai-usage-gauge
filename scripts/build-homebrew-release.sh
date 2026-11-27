@@ -17,17 +17,8 @@ Targets:
 Environment:
   RELEASE_VERSION       Override package version used in archive names.
   RELEASE_DIR           Output directory. Defaults to dist/homebrew.
-  SWIFT_BIN             Swift executable. Defaults to Xcode's Swift toolchain on macOS, then PATH.
-  SWIFT_DEVELOPER_DIR   Defaults to /Applications/Xcode.app/Contents/Developer on macOS.
-  SWIFT_SDKROOT         Defaults to Xcode's macOS SDK path on macOS.
 
-Examples:
-  scripts/build-homebrew-release.sh
-  scripts/build-homebrew-release.sh --dry-run darwin-arm64 darwin-x64
-  scripts/build-homebrew-release.sh darwin-arm64 darwin-x64
-
-This builder stages Swift macOS archives for a Homebrew formula. It does not
-publish release assets, mutate a tap, render a formula, or push commits.
+This builder stages Rust + Tauri v2 macOS archives for a Homebrew formula.
 EOF
 }
 
@@ -35,36 +26,24 @@ detect_target() {
   local kernel arch
   kernel="$(uname -s)"
   arch="$(uname -m)"
-
   case "$kernel:$arch" in
     Darwin:arm64) printf '%s\n' "darwin-arm64" ;;
     Darwin:x86_64) printf '%s\n' "darwin-x64" ;;
-    *)
-      printf 'unsupported Swift Homebrew host platform: %s/%s\n' "$kernel" "$arch" >&2
-      return 1
-      ;;
+    *) printf 'unsupported Homebrew host platform: %s/%s\n' "$kernel" "$arch" >&2; return 1 ;;
   esac
 }
 
 validate_target() {
   case "$1" in
     darwin-arm64 | darwin-x64) ;;
-    *)
-      printf 'unsupported Swift Homebrew target: %s\n' "$1" >&2
-      printf 'Linux Homebrew archives are unsupported until the project defines a reviewed Swift Linux build contract.\n' >&2
-      usage >&2
-      return 1
-      ;;
+    *) printf 'unsupported Homebrew target: %s\n' "$1" >&2; usage >&2; return 1 ;;
   esac
 }
 
 validate_version() {
-  local version
-  version="$1"
-
+  local version="$1"
   if [[ "$version" == *..* || ! "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+([-+][0-9A-Za-z][0-9A-Za-z.+-]*)?$ ]]; then
     printf 'unsafe release version: %s\n' "$version" >&2
-    printf 'expected archive-safe semver-like value without path separators or parent traversal\n' >&2
     return 1
   fi
 }
@@ -76,35 +55,11 @@ absolute_path() {
   esac
 }
 
-validate_release_dir() {
-  local path part
-  local -a parts
-  path="$1"
-
-  if [[ -z "$path" ]]; then
-    printf 'unsafe release directory: empty path\n' >&2
-    return 1
-  fi
-
-  IFS='/' read -r -a parts <<< "$path"
-  for part in "${parts[@]}"; do
-    if [[ "$part" == "." || "$part" == ".." ]]; then
-      printf 'unsafe release directory: %s\n' "$path" >&2
-      printf 'release directory must not contain . or .. path components\n' >&2
-      return 1
-    fi
-  done
-}
-
-assert_child_path() {
-  local root child
-  root="${1%/}"
-  child="$2"
-
-  if [[ -z "$root" || "$root" == "/" || "$child" != "$root"/* ]]; then
-    printf 'unsafe path outside release directory: %s\n' "$child" >&2
-    return 1
-  fi
+rust_target_for() {
+  case "$1" in
+    darwin-arm64) printf '%s\n' "aarch64-apple-darwin" ;;
+    darwin-x64) printf '%s\n' "x86_64-apple-darwin" ;;
+  esac
 }
 
 expected_arch_for_target() {
@@ -114,10 +69,6 @@ expected_arch_for_target() {
   esac
 }
 
-# Executing a build for the other architecture would launch it under Rosetta,
-# which macOS is phasing out (https://support.apple.com/102527) and which makes
-# macOS warn about an Intel app. Only run native builds; otherwise check the
-# slice and the version compiled in from Sources/AppCore/Version.swift.
 verify_staged_binary() {
   local binary="$1" target="$2" expected_version="$3"
   if [[ "$(lipo -archs "$binary")" != "$(expected_arch_for_target "$target")" ]]; then
@@ -125,124 +76,67 @@ verify_staged_binary() {
     return 1
   fi
   if [[ "$target" == "$(detect_target)" ]]; then
-    [[ "$("$binary" --version)" == "$expected_version" ]] || return 1
+    "$binary" --version | grep -Fq "$expected_version" || return 1
   else
-    grep -Fq "public static let current = \"$expected_version\"" "$repo_root/Sources/AppCore/Version.swift" || return 1
+    grep -Fq "version = \"$expected_version\"" "$repo_root/Cargo.toml" || return 1
   fi
-}
-
-swift_triple_for_target() {
-  case "$1" in
-    darwin-arm64) printf '%s\n' "arm64-apple-macosx" ;;
-    darwin-x64) printf '%s\n' "x86_64-apple-macosx" ;;
-  esac
 }
 
 write_sha256() {
-  local file dir base
-  file="$1"
+  local file="$1" dir base
   dir="$(dirname "$file")"
   base="$(basename "$file")"
-
-  if command -v shasum >/dev/null 2>&1; then
-    ( cd "$dir" && shasum -a 256 "$base" )
-    return
-  fi
-  if command -v sha256sum >/dev/null 2>&1; then
-    ( cd "$dir" && sha256sum "$base" )
-    return
-  fi
-
-  printf 'missing checksum tool: expected shasum or sha256sum\n' >&2
-  return 1
+  ( cd "$dir" && shasum -a 256 "$base" )
 }
 
 package_version() {
   if [[ -n "${RELEASE_VERSION:-}" ]]; then
     printf '%s\n' "$RELEASE_VERSION"
-    return
+  else
+    tr -d '[:space:]' < "$repo_root/VERSION"
   fi
-
-  tr -d '[:space:]' < "$repo_root/VERSION"
-}
-
-swift_bin() {
-  if [[ -n "${SWIFT_BIN:-}" ]]; then
-    printf '%s\n' "$SWIFT_BIN"
-    return
-  fi
-  if [[ -x /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift ]]; then
-    printf '%s\n' "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
-    return
-  fi
-  command -v swift
-}
-
-swift_release_bin_path() {
-  local target swift_exe developer_dir sdkroot triple
-  target="$1"
-  swift_exe="$(swift_bin)"
-  developer_dir="${SWIFT_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-  sdkroot="${SWIFT_SDKROOT:-/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk}"
-  triple="$(swift_triple_for_target "$target")"
-
-  (
-    cd "$repo_root"
-    DEVELOPER_DIR="$developer_dir" SDKROOT="$sdkroot" \
-      "$swift_exe" build -c release --product "$product" --triple "$triple" >/dev/null
-    DEVELOPER_DIR="$developer_dir" SDKROOT="$sdkroot" \
-      "$swift_exe" build -c release --product "$product" --triple "$triple" --show-bin-path
-  )
 }
 
 print_plan() {
-  local version target release_dir work_dir archive binary triple
-  version="$1"
-  target="$2"
-  release_dir="$3"
+  local version="$1" target="$2" release_dir="$3"
+  local triple work_dir archive
+  triple="$(rust_target_for "$target")"
   work_dir="$release_dir/work/$artifact_name-$version-$target"
   archive="$release_dir/$artifact_name-$version-$target.tar.gz"
-  binary="$work_dir/bin/$product"
-  triple="$(swift_triple_for_target "$target")"
 
-  assert_child_path "$release_dir" "$work_dir"
-  assert_child_path "$release_dir" "$archive"
-
-  printf 'Swift Homebrew archive plan\n'
+  printf 'Rust Homebrew archive plan\n'
   printf '  product: %s\n' "$product"
   printf '  target: %s\n' "$target"
-  printf '  swift triple: %s\n' "$triple"
-  printf '  release bin path command: swift build -c release --product %s --triple %s --show-bin-path\n' "$product" "$triple"
-  printf '  staged binary: %s\n' "$binary"
+  printf '  rust target: %s\n' "$triple"
+  printf '  build command: cargo build --locked --release -p ccusage-cli -p ccusage-gauge-app --target %s\n' "$triple"
+  printf '  staged binaries: %s/bin/%s, %s/bin/ccusage-gauge-app\n' "$work_dir" "$product" "$work_dir"
   printf '  archive: %s\n' "$archive"
   printf '  checksum: %s.sha256\n' "$archive"
   printf '  publish side effects: false\n'
 }
 
 build_target() {
-  local version target release_dir bin_path work_dir archive binary
-  version="$1"
-  target="$2"
-  release_dir="$3"
+  local version="$1" target="$2" release_dir="$3"
+  local triple work_dir archive bin_dir
+  triple="$(rust_target_for "$target")"
   work_dir="$release_dir/work/$artifact_name-$version-$target"
   archive="$release_dir/$artifact_name-$version-$target.tar.gz"
-  binary="$work_dir/bin/$product"
-
-  assert_child_path "$release_dir" "$work_dir"
-  assert_child_path "$release_dir" "$archive"
+  bin_dir="$repo_root/target/$triple/release"
 
   rm -rf "$work_dir" "$archive" "$archive.sha256"
-  mkdir -p "$work_dir/bin"
+  mkdir -p "$work_dir/bin" "$work_dir/share/ccusage-gauge/web"
 
-  bin_path="$(swift_release_bin_path "$target" | tail -n 1)"
-  cp "$bin_path/$product" "$binary"
-  chmod 0755 "$binary"
-  verify_staged_binary "$binary" "$target" "$version"
-  desktop_binary="$(bash "$repo_root/scripts/build-desktop-release.sh" "$target")"
-  cp "$desktop_binary" "$work_dir/bin/ccusage-gauge-dashboard"
-  mkdir -p "$work_dir/share/ccusage-gauge/web"
+  (
+    cd "$repo_root"
+    cargo build --locked --release -p ccusage-cli -p ccusage-gauge-app --target "$triple"
+  )
+
+  cp "$bin_dir/$product" "$work_dir/bin/$product"
+  cp "$bin_dir/ccusage-gauge-app" "$work_dir/bin/ccusage-gauge-app"
+  chmod 0755 "$work_dir/bin/$product" "$work_dir/bin/ccusage-gauge-app"
+  verify_staged_binary "$work_dir/bin/$product" "$target" "$version"
   cp -R "$repo_root/frontend/dist/." "$work_dir/share/ccusage-gauge/web/"
-  cp "$repo_root/README.md" "$work_dir/README.md"
+  cp "$repo_root/README.md" "$repo_root/LICENSE" "$work_dir/"
 
   tar -C "$work_dir" -czf "$archive" .
   write_sha256 "$archive" > "$archive.sha256"
@@ -252,31 +146,17 @@ build_target() {
 }
 
 main() {
-  local dry_run
-  dry_run=false
-
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    usage
-    return
-  fi
-
-  if [[ "${1:-}" == "--dry-run" ]]; then
-    dry_run=true
-    shift
-  fi
+  local dry_run=false
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then usage; return; fi
+  if [[ "${1:-}" == "--dry-run" ]]; then dry_run=true; shift; fi
 
   local version release_dir
   version="$(package_version)"
   validate_version "$version"
   release_dir="$(absolute_path "${RELEASE_DIR:-dist/homebrew}")"
-  validate_release_dir "$release_dir"
 
   local -a targets
-  if [[ "$#" -eq 0 ]]; then
-    targets=("$(detect_target)")
-  else
-    targets=("$@")
-  fi
+  if [[ "$#" -eq 0 ]]; then targets=("$(detect_target)"); else targets=("$@"); fi
 
   local target
   for target in "${targets[@]}"; do
@@ -288,9 +168,6 @@ main() {
       build_target "$version" "$target" "$release_dir"
     fi
   done
-
-  printf '\nRender a formula after all platform archives exist:\n'
-  printf '  scripts/render-homebrew-formula.sh %s\n' "$version"
 }
 
 main "$@"

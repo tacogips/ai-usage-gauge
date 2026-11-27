@@ -16,12 +16,12 @@ You (the LLM model) must include a paraphrase or summary of the user's instructi
 
 ## Project Overview
 
-This is `ccusage-gauge`, a Swift Package Manager project with a mise-managed development environment and task automation, Homebrew formula packaging, and optional signed Homebrew Cask packaging.
+This is `ccusage-gauge`, a pure Rust and Tauri v2 workspace (`crates/ccusage-core`, `crates/ccusage-cli`, `src-tauri`) with a SolidJS frontend (`frontend/`), a mise-managed development environment and task automation, Homebrew formula packaging, and optional signed Homebrew Cask packaging.
 
 ## Development Environment
 
-- Language: Swift
-- Package manager: Swift Package Manager
+- Language: Rust (Cargo workspace) and TypeScript/SolidJS (frontend)
+- Desktop / Tray runtime: Tauri v2
 - Build automation: mise
 - Environment manager: mise
 - Tool setup: `mise install`
@@ -32,20 +32,18 @@ This is `ccusage-gauge`, a Swift Package Manager project with a mise-managed dev
 mise run build
 mise run test
 mise run lint
-swift run ccusage-gauge --help
+cargo run -p ccusage-cli -- --help
 ```
 
-## Swift Code Development
-
-When implementing, refactoring, reviewing, or maintaining Swift code, use the Swift coding skill at `.codex/skills/swift-coding-agent/SKILL.md`.
+## Rust and Tauri Code Development
 
 Important defaults:
 
-- Inspect `Package.swift`, nearby source, tests, and existing conventions before editing.
-- Prefer the current SwiftPM target boundaries over adding new modules.
-- Keep Swift files under 1000 lines. Split long files by meaningful responsibility.
-- Run `swiftlint` after Swift edits when available.
-- Run the narrowest relevant `swift test` or `swift build` command, then broaden when shared behavior changed.
+- Inspect `Cargo.toml`, nearby crate source, tests, and existing conventions before editing.
+- Prefer the current workspace crate boundaries (`crates/ccusage-core`, `crates/ccusage-cli`, `src-tauri`) over adding new crates.
+- Keep Rust source files under 1000 lines. Split long files by meaningful responsibility.
+- Run `cargo clippy --locked --workspace --all-targets -- -D warnings` after Rust edits.
+- Run the narrowest relevant `cargo test` or `cargo build` command, then broaden to `cargo test --locked --workspace` when shared behavior changed.
 
 ## Release Workflows
 

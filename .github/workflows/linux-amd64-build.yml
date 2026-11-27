@@ -23,42 +23,43 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Build Frontend Assets
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run check
+          bun test
+          bun run build
+
       - name: Build And Verify Linux amd64 CLI
-        env:
-          SWIFT_IMAGE: swift@sha256:4c6af6663ed2316002a3b38ff5505a1fc1f2749ec31e84936c32dd336713c569
-          EXECUTABLE_NAME: "ccusage-gauge"
         run: |
           set -euo pipefail
-          docker run --rm \
-            --platform linux/amd64 \
-            -e EXECUTABLE_NAME \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
-            "$SWIFT_IMAGE" \
-            bash -lc '
-              set -euo pipefail
-              apt-get update
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl libsqlite3-dev
-              rm -rf /var/lib/apt/lists/*
-              test "$(uname -m)" = "x86_64"
-              swift --version
-              swift test --triple x86_64-unknown-linux-gnu
-              swift build -c release --product "$EXECUTABLE_NAME" --triple x86_64-unknown-linux-gnu
+          cargo test --locked -p ccusage-core -p ccusage-cli
+          cargo build --locked --release -p ccusage-cli --target x86_64-unknown-linux-gnu
 
-              bin_dir="$(swift build -c release --show-bin-path --triple x86_64-unknown-linux-gnu)"
-              stage="dist/linux-amd64"
-              rm -rf "$stage"
-              mkdir -p "$stage/bin" "$stage/share/ccusage-gauge/web"
-              install -m 0755 "$bin_dir/$EXECUTABLE_NAME" "$stage/bin/$EXECUTABLE_NAME"
-              cp -R Sources/AppCore/Resources/Web/. "$stage/share/ccusage-gauge/web/"
-              cp LICENSE README.md "$stage/"
+          stage="dist/linux-amd64"
+          rm -rf "$stage"
+          mkdir -p "$stage/bin" "$stage/share/ccusage-gauge/web"
+          install -m 0755 "target/x86_64-unknown-linux-gnu/release/ccusage-gauge" "$stage/bin/ccusage-gauge"
+          cp -R frontend/dist/. "$stage/share/ccusage-gauge/web/"
+          cp LICENSE README.md "$stage/"
 
-              scripts/smoke-dashboard.sh \
-                --port 18083 \
-                --binary "$stage/bin/$EXECUTABLE_NAME" \
-                --installed-assets
-              tar -C "$stage" -czf "dist/$EXECUTABLE_NAME-linux-amd64.tar.gz" .
-            '
+          scripts/smoke-dashboard.sh \
+            --port 18083 \
+            --binary "$stage/bin/ccusage-gauge" \
+            --installed-assets
+          tar -C "$stage" -czf "dist/ccusage-gauge-linux-amd64.tar.gz" .
 
       - name: Upload Linux amd64 Archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

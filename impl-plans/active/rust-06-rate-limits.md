@@ -85,3 +85,15 @@ Done when both commands exit `0` and all rate-limit, PTY, redaction, throttling,
 ## Progress Log
 
 Record progress in a dedicated worker progress note; read each target file fresh before editing, capture pre/post content hashes to detect unexpected drift, never modify `impl-plans/active/` or run concurrent git operations, and keep all edits strictly within `writePaths`.
+
+### Implementation progress
+
+- Added Claude and Codex fetchers, bounded reverse JSONL fallback, Gemini PTY polling and cleanup, observation storage, provider throttling/coalescing, and display formatting under `crates/ccusage-core/src/rate_limits/`.
+- Added fixture tests for redaction, redirect rejection, provider parsing, fallback search, throttling, concurrent calls, stale results, private PTY directory cleanup, and process timeout/reaping. The standalone formatter uses a local edition configuration for the rate-limit source directory.
+- Final scoped formatter and behavioral gate results are recorded under `tmp/rust-tauri-migration-20261126/rust-06-rate-limits/`. Formal review and workflow finalization remain downstream.
+
+### Adversarial review repairs
+
+- RL-06-NULL-WINDOW-FIELDS: skip absent/null optional window fields without losing valid siblings; reject malformed non-null windows and fields. Added regression coverage.
+- RL-06-CLIPPY-CLEAN: factored the Claude credential reader type and simplified Codex timestamp extraction. Focused Clippy reports no rate-limit file diagnostics; sibling warnings remain for their owners and serial join.
+- Scoped formatting and behavioral verification passed; independent re-review remains downstream.

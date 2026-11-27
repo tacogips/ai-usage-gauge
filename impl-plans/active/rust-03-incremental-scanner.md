@@ -86,3 +86,25 @@ Done when both commands exit `0` and all test cases above pass deterministically
 ## Progress Log
 
 Record progress in a dedicated worker progress note; read each target file fresh before editing, capture pre/post content hashes to detect unexpected drift, never modify `impl-plans/active/` or run concurrent git operations, and keep all edits strictly within `writePaths`.
+
+### Implementation progress
+
+Implemented initial provider parsers, file metadata and boundary validation, complete-line reading, cache retention helpers, and a forward incremental scanner facade. Added focused incremental, Codex attribution, and Antigravity parsing tests. The facade still requires bounded Codex reverse-scan integration, and the full plan acceptance fixtures (including reverse/append parity, workspace database behavior, and boundary-slot lifecycle) remain outstanding. Formal reviews follow implementation.
+
+The required scanner test command exited 101 before running tests because sibling files `remote/mutation_owner.rs` and `cache/aggregation_cache.rs` failed to compile; see `tmp/rust-tauri-migration-20261126/rust-03-incremental-scanner/scanner-test.log`. Re-run after those sibling errors are repaired, then complete the outstanding scanner implementation and fixtures.
+
+### Implementation continuation
+
+Integrated bounded reverse Codex scanning with early cutoff, initial session metadata probing, complete-line offsets, newest-context append resume, and filename-based session defaults. Added tests for pre-cutoff multi-turn parity, bounded reads, boundary-slot lifecycle, and Antigravity transcript preference and read-only workspace lookup. The final required gates are recorded in the plan-local evidence directory. Further acceptance fixtures are still needed for same-size/larger rewrites, detailed deduplication, timezone rebucketing, and Antigravity WAL behavior; the active-boundary helper also needs a documented facade integration path. Formal review and finalization remain downstream.
+
+### Implementation continuation 2
+
+The prior outstanding scanner work is now addressed: the facade offers a separate pinned-day scan slot, retention-floor pruning, explicit clearing for cycle changes, and isolated one-off historical scans. Append transition metadata includes backdated events for downstream anchor validation. Forward scans stream complete lines; byte statistics include boundary validation and capture. Antigravity retains the last row per step and avoids creating a missing SQLite shared-memory sidecar. Regression fixtures cover same-size and larger boundary rewrites, timezone rebucketing, Claude deduplication and effort, pinned-slot lifecycle, historical isolation, Antigravity deduplication, and live WAL/no-sidecar behavior. The exact plan gates are recorded in the plan-local evidence directory. Rolling-window orchestration and formal review remain owned by downstream steps.
+
+### Adversarial review revisions
+
+Addressed SCAN-01 through SCAN-05: bounded 1 MiB Codex metadata probing; sidecar-free closed-WAL workspace reads and per-row invalid-value skipping; preserved cache coverage on narrower resume; and corrected retention-prune coverage. Added regression fixtures for each correction and reran the assigned gates. Independent review of these changes remains pending.
+
+### Integration review revision
+
+Addressed INT-WAVE5-RUST03-CLIPPY by passing the existing `&str` directly to `claude::parse_line`. On the current shared tree, rustfmt passed, all 17 scanner tests passed, and scoped Clippy exited 0 with no scanner or scanner-test diagnostics. Clippy reported five warnings in sibling cache and remote files; their serial-join remediation remains outside this plan. Logs are in `tmp/rust-tauri-migration-20261126/rust-03-incremental-scanner/` with the `int-wave5-` prefix. Independent review and finalization remain downstream.

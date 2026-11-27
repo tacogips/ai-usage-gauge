@@ -14,7 +14,7 @@ ccusage-gauge displays two different kinds of information and keeps them apart:
 | --- | --- | --- |
 | Subscription limit usage: used/remaining % of the 5-hour and weekly windows, reset time | How much of your plan's allowance is left right now | Provider usage endpoints for Claude Code and Codex, and the local Antigravity CLI status line for Gemini |
 | Extended usage ("credit") | Claude extra-usage spend against its monthly limit; Codex credit balance | Same usage endpoints |
-| Token counts and API-equivalent cost | What you have consumed, priced at API rates | Local Claude Code and Codex logs aggregated by [`ccusage`](https://github.com/ryoppippi/ccusage), plus local Antigravity CLI transcripts |
+| Token counts and API-equivalent cost | What you have consumed, priced at API rates | Native Rust scanner over local Claude Code JSONL logs, Codex JSONL logs, and Antigravity CLI transcripts (no local `ccusage` CLI required); remote machines over SSH |
 
 Subscription percentages are **not** estimated from token cost; they are the
 values the providers report for your account.
@@ -50,9 +50,10 @@ Where it appears:
 
 ## Overview
 
-ccusage-gauge supports ccusage 20.0.17 and later. It automatically uses the
-20.0.17 `--by-agent` daily report and the flag-free daily report introduced by
-ccusage 20.1.0.
+ccusage-gauge is a pure Rust and Tauri v2 application that scans local Claude Code,
+Codex, and Antigravity CLI usage logs directly without requiring a local `ccusage`
+installation. Remote SSH machines can still collect usage via a remote `ccusage`
+binary.
 
 By default, the status item shows a budget-progress pie and cost for the selected
 aggregation period. You can instead show the spending amount and Claude Code,
@@ -60,9 +61,9 @@ Codex, or Gemini usage icons that fill from bottom to top as subscription usage 
 Percentages beside the icons are optional; see
 [Subscription usage and display controls](#subscription-usage-and-display-controls).
 Its menu supports budget editing, hourly/daily/weekly/
-monthly/custom-hour aggregation periods, Launch at Login, dashboard start/stop/open,
-refresh, and quit. Missing or invalid `ccusage` configuration changes the
-status icon to a warning and exposes diagnostics plus retry in an Error Details
+monthly/custom-hour aggregation periods, Launch at Login, dashboard open/close,
+refresh, and quit. Collection or configuration errors change the
+status icon to a warning and expose diagnostics plus retry in an Error Details
 submenu.
 
 ## Screenshots
@@ -88,22 +89,20 @@ and dashboard controls.
 
 ## Install with Homebrew
 
-Install the `ccusage` data source and the CCUsage Gauge Cask:
+Install the CCUsage Gauge Cask:
 
 ```bash
-brew install ccusage
 brew install --cask tacogips/tap/ccusage-gauge
 ```
 
-The Cask installs the macOS menu-bar app and the `ccusage-gauge` command-line
-tool. Open **CCUsage Gauge** from Applications after installation, or run
+The Cask installs the macOS menu-bar app (`CCUsageGauge.app`) and the `ccusage-gauge`
+command-line tool. Open **CCUsage Gauge** from Applications after installation, or run
 `ccusage-gauge dashboard` to open the native dashboard. Use
 `ccusage-gauge serve` for the optional browser dashboard.
 
-To update both the app and its data source:
+To update the app:
 
 ```bash
-brew upgrade ccusage
 brew upgrade --cask tacogips/tap/ccusage-gauge
 ```
 
@@ -111,9 +110,9 @@ Quit and reopen **CCUsage Gauge** after upgrading so it uses the installed versi
 
 The SolidJS dashboard provides:
 
-- exact per-agent and per-model rows from `ccusage daily --json --by-agent` on
-  ccusage 20.0.17 and `ccusage daily --json` on ccusage 20.1.0 and later, plus
-  Antigravity CLI token and estimated cost rows;
+- exact per-agent and per-model rows aggregated natively from local Claude Code
+  and Codex JSONL logs plus Antigravity CLI transcripts (and remote SSH machines
+  when configured);
 - a **Subscription usage** panel above the cost cards, with chart selection
   controls at the upper right and percentages always visible;
 - one compact line per provider, showing only enabled windows and their reset
@@ -186,27 +185,29 @@ remains visible but is disabled and struck through.
 
 ## Native dashboard (Tauri)
 
-The menu-bar app's **Open dashboard** launches a Tauri 2 window. Swift owns
-collection, caches, machine management, and dashboard state; Tauri embeds the
-SolidJS assets and forwards requests over private stdin/stdout JSON pipes.
-No HTTP listener, browser, or Vite development server is needed.
+The menu-bar app (`ccusage-gauge-app`) is a single Rust + Tauri v2 application
+that owns collection, caches, machine management, tray icons/menus, and the
+native SolidJS dashboard window in one process via Tauri IPC. No HTTP listener,
+browser, or Vite development server is needed.
 
 ```bash
 mise run desktop:run
 ```
 
-After `mise run desktop:build`, use `swift run ccusage-gauge dashboard`.
-The window executable must be beside the Swift executable, or supplied with
-`CCUSAGE_GAUGE_DESKTOP_EXECUTABLE=/absolute/path/to/ccusage-gauge-dashboard`.
-Closing the window ends the CLI host; closing it from the menu-bar app leaves
-the gauge running. **Open dashboard** focuses an existing window or opens a new one.
-`dashboardAutostart` now opens the native window at menu-bar startup; set it to
+After `mise run desktop:build`, use `cargo run -p ccusage-cli -- dashboard` (or
+`ccusage-gauge dashboard`). The CLI resolves the sibling `ccusage-gauge-app`
+executable, or uses `CCUSAGE_GAUGE_DESKTOP_EXECUTABLE=/absolute/path/to/ccusage-gauge-app`
+when set, and launches it with `--open-dashboard`.
+Closing the dashboard window hides it while leaving the menu-bar gauge running.
+**Open dashboard** focuses an existing window or shows it again.
+`dashboardAutostart` opens the native window at menu-bar startup; set it to
 `false` to open the dashboard only on demand.
 
-The desktop build requires Rust, Bun, Swift, and native Tauri prerequisites
-(Xcode on macOS; WebKitGTK 4.1 and other Tauri development libraries on Linux).
-Both the macOS app bundle and Formula release archives include the Tauri executable.
-The Cask installs the signed and notarized menu-bar app, dashboard, and CLI.
+The desktop build requires Rust, Bun, and native Tauri prerequisites
+(Xcode Command Line Tools on macOS; WebKitGTK 4.1 and other Tauri development
+libraries on Linux). Both the macOS app bundle and Formula release archives
+include `ccusage-gauge` and `ccusage-gauge-app`. The Cask installs the signed
+and notarized `CCUsageGauge.app` bundle and CLI.
 
 ## Optional dashboard server (macOS and Linux)
 
@@ -235,8 +236,7 @@ CCUsage Gauge can be installed declaratively through nix-darwin's Homebrew
 integration. Homebrew must already be installed, either separately or through
 a Nix Homebrew integration such as `nix-homebrew`.
 
-Add the tap, the `ccusage` CLI used as the data source, and the CCUsage Gauge
-Cask to a nix-darwin module:
+Add the tap and the CCUsage Gauge Cask to a nix-darwin module:
 
 ```nix
 { ... }:
@@ -244,7 +244,6 @@ Cask to a nix-darwin module:
   homebrew = {
     enable = true;
     taps = [ "tacogips/tap" ];
-    brews = [ "ccusage" ];
     casks = [ "tacogips/tap/ccusage-gauge" ];
   };
 }
@@ -272,28 +271,24 @@ below; it is not the application installation package.
 mise install
 mise run build
 mise run test
+mise run lint
 mise run app:build
 mise run app:run
-swift run ccusage-gauge --help
-swift run ccusage-gauge-menubar
+cargo run -p ccusage-cli -- --help
 ```
 
-`mise run app:build` creates an ad-hoc signed `.build/CCUsageGauge.app` bundle with
-`Resources/AppIcon.icns`. `mise run app:run` builds and launches that menu-bar app.
+`mise run app:build` creates an ad-hoc signed `target/CCUsageGauge.app` bundle with
+`Resources/AppIcon.icns`, `Contents/MacOS/ccusage-gauge-app`, `Contents/MacOS/ccusage-gauge`,
+and `Contents/Resources/Web`. `mise run app:run` builds and launches that menu-bar app.
 Because it is an `LSUIElement` utility, it uses the icon in Finder and launch
 surfaces but intentionally does not remain in the Dock.
 
-The package uses Swift Package Manager with:
+The Cargo workspace contains:
 
-- Library target: `AppCore`
-- Executable target: `AppCLI`
-- Installed executable: `ccusage-gauge`
-- Menu-bar executable target/product: `CCUsageGaugeMenuBar` / `ccusage-gauge-menubar`
-
-Swift target names and type names must be valid Swift identifiers. If the project
-name contains hyphens, keep `PROJECT_NAME` and `EXECUTABLE_NAME` hyphenated as
-needed, but use identifier-safe values such as `AppCore`, `AppCLI`, and
-`AppCommand` for Swift module/type variables.
+- Core library crate: `crates/ccusage-core` (`ccusage-core`)
+- CLI binary crate: `crates/ccusage-cli` (executable: `ccusage-gauge`)
+- Desktop / menu-bar Tauri v2 crate: `src-tauri` (executable: `ccusage-gauge-app`)
+- Frontend assets: `frontend/` (SolidJS + TypeScript, built with Bun)
 
 ## Configuration and state
 
@@ -324,7 +319,7 @@ The generated defaults are:
 
 | Field | Type and default | Behavior and validation |
 | --- | --- | --- |
-| `ccusagePath` | string or `null`; default `null` | An explicit value must be an absolute executable path. `null` searches `PATH`, `/opt/homebrew/bin`, and `/usr/local/bin`. An invalid explicit path is an error and does not fall back. |
+| `ccusagePath` | string or `null`; default `null` | Retained for backward compatibility (and optional remote/legacy tooling). Local usage is scanned natively from Claude Code, Codex, and Antigravity logs without invoking a local `ccusage` binary. An explicit value, when set, must be an absolute executable path. |
 | `defaultResetTerm` | string; default `"daily"` | Initial aggregation period when mutable state has no selection. Supported values are `"hourly"`, `"daily"`, `"weekly"`, and `"monthly"`. |
 | `dashboardPort` | integer; default `18081` | Loopback port in the range `1` through `65535` for the optional `serve` command. The native window does not use it. |
 | `dashboardAutostart` | boolean; default `true` | Opens the native Tauri dashboard when the menu-bar application starts. |
@@ -371,7 +366,7 @@ daily/session and raw Claude event reads to uncached and current dates. Set
 The cache uses the system SQLite library. Metadata, daily aggregates, and
 session aggregates are stored in normalized tables and updated transactionally.
 
-Validate the production configuration and resolved `ccusage` executable with:
+Validate the production configuration with:
 
 ```bash
 ccusage-gauge config-check
@@ -380,7 +375,7 @@ ccusage-gauge config-check
 During source development, the equivalent command is:
 
 ```bash
-swift run ccusage-gauge config-check
+cargo run -p ccusage-cli -- config-check
 ```
 
 Mutable budget/aggregation-period state is stored separately at
@@ -776,7 +771,7 @@ mise run e2e:build -- unreachable
 ```
 
 The Computer Use scenarios and recorded evidence are under
-`design-docs/e2e/`. E2E config, state, and cache stay below `.build/e2e` and do
+`design-docs/e2e/`. E2E app bundles and runtime files stay below `target/e2e` and do
 not touch the operator's production files.
 
 ## Homebrew Formula

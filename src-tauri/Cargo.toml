@@ -1,14 +1,37 @@
 [package]
-name = "ccusage-gauge-dashboard"
-version = "0.5.1"
-edition = "2021"
-description = "Native dashboard window hosted by ccusage-gauge"
-license = "MIT"
+name = "ccusage-gauge-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "ccusage_gauge_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ccusage-gauge-app"
+path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build.workspace = true
 
 [dependencies]
-tauri = { version = "2", features = ["custom-protocol"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+tauri.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ccusage-core = { path = "../crates/ccusage-core" }
+png.workspace = true
+tiny-skia.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+iana-time-zone.workspace = true
+rust_decimal.workspace = true
+url.workspace = true
+percent-encoding.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"

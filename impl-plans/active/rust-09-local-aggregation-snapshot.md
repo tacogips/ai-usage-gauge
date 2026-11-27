@@ -99,3 +99,22 @@ Done when all three commands exit `0` and every fixture above passes determinist
 ## Progress Log
 
 Record progress in a dedicated worker progress note; read each target file fresh before editing, capture pre/post content hashes to detect unexpected drift, never modify `impl-plans/active/` or run concurrent git operations, and keep all edits strictly within `writePaths`.
+
+### Implementation progress (2026-11-27)
+
+- Added a pure five-hour block replay primitive and focused cross-midnight and gap tests. It expects deduplicated events from a known regenerative reset; it does not yet implement reset discovery or `BlockAnchor` checkpoint lifecycle.
+- The local bucket aggregation, exact rolling inputs and legacy precedence, snapshot service, machine merge/collector, and remaining acceptance fixtures are still outstanding. The plan is not complete.
+- Current-source rustfmt, two focused aggregation tests, and core clippy passed; their logs are under `tmp/rust-tauri-migration-20261126/rust-09-local-aggregation-snapshot/`. These checks do not establish the unimplemented acceptance criteria.
+- Formal review, integration review, and workflow finalization remain downstream.
+
+### Implementation continuation 1 (2026-11-27)
+
+- Added daily local-calendar aggregation and 15-minute UTC chart buckets, with directory and effort attribution in session rows and checked token arithmetic.
+- Added a half-open exact event-cost helper and focused tests for chart/rolling boundaries, local dates, directory attribution, and pre-epoch flooring. Five aggregation tests, rustfmt, and core clippy pass.
+- Completion criteria remain unmet: regenerative reset discovery and BlockAnchor lifecycle, legacy partition selection and cost conservation, long-window scanner/cache orchestration, snapshot service, multi-machine collection, and their end-to-end fixtures are outstanding. Formal review and finalization remain downstream.
+
+### Implementation continuation 2 (2026-11-27)
+
+- Added per-partition legacy rolling selection with exclusive cached-session fallback for incomplete raw logs and proportional cached-cost conservation for complete raw logs, plus focused tests.
+- Seven aggregation tests, rustfmt, and core clippy pass. The helper requires the caller to supply a complete single partition in stable order.
+- Completion criteria remain unmet: regenerative reset discovery and BlockAnchor lifecycle, active-boundary and cache orchestration, SnapshotService, machine merge and collector, and their end-to-end fixtures are outstanding. Formal review and finalization remain downstream.

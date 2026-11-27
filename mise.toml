@@ -17,8 +17,6 @@ fi
 '''
 
 [tools]
-swift = "6.3.3"
-swiftlint = "latest"
 gitleaks = "latest"
 bun = "1.4.4"
 rust = "1.98.1"
@@ -32,16 +30,16 @@ mise tasks ls
 '''
 
 [tasks."build"]
-description = "Build the Swift package"
+description = "Build the Rust workspace"
 depends = ["frontend:build"]
 run = '''
-swift build
+cargo build --workspace
 '''
 
 [tasks."run"]
-description = "Run the executable"
+description = "Run the CLI executable"
 run = '''
-swift run ccusage-gauge "$@"
+cargo run -p ccusage-cli -- "$@"
 '''
 
 [tasks."app:build"]
@@ -55,55 +53,52 @@ scripts/build-local-app.sh
 description = "Build and launch the local macOS menu-bar app bundle"
 depends = ["app:build"]
 run = '''
-open .build/CCUsageGauge.app
+open target/CCUsageGauge.app
 '''
 
 [tasks."test"]
-description = "Run Swift tests"
+description = "Run Rust workspace tests"
 run = '''
-swift test
+cargo test --workspace
 '''
 
 [tasks."test:coverage"]
-description = "Enforce at least 80 percent executable line coverage for AppCore and AppCLI"
+description = "Measure Rust line coverage for ccusage-core and ccusage-cli"
 run = '''
 scripts/test-coverage.sh
 '''
 
 [tasks."clean"]
-description = "Clean SwiftPM and release artifacts"
+description = "Clean Cargo and release artifacts"
 run = '''
-rm -rf .build dist release
+rm -rf target dist release
 '''
 
 [tasks."lint"]
-description = "Run SwiftLint when available"
+description = "Run clippy across the Rust workspace"
 run = '''
-swiftlint
+cargo clippy --workspace --all-targets -- -D warnings
 '''
 
 [tasks."desktop:build"]
-description = "Build the Tauri window with embedded assets and the Swift CLI host (no server)"
+description = "Build the Tauri app and CLI release binaries side-by-side"
 depends = ["frontend:build"]
 run = '''
-cargo build --release --manifest-path src-tauri/Cargo.toml
-swift build --product ccusage-gauge
-bin_dir="$(swift build --show-bin-path)"
-cp src-tauri/target/release/ccusage-gauge-dashboard "$bin_dir/ccusage-gauge-dashboard"
+cargo build --release -p ccusage-cli -p ccusage-gauge-app
 '''
 
 [tasks."desktop:run"]
 description = "Build and open the dashboard without a web server"
 depends = ["desktop:build"]
 run = '''
-swift run ccusage-gauge dashboard
+target/release/ccusage-gauge dashboard
 '''
 
 [tasks."desktop:test"]
-description = "Test the native dashboard bridge"
+description = "Test the Tauri desktop app"
 depends = ["frontend:build"]
 run = '''
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test -p ccusage-gauge-app
 '''
 
 [tasks."frontend:install"]
@@ -130,12 +125,11 @@ bun test
 '''
 
 [tasks."frontend:build"]
-description = "Build and synchronize the SolidJS dashboard assets"
+description = "Build the SolidJS dashboard assets"
 depends = ["frontend:install"]
 dir = "frontend"
 run = '''
 bun run build
-../scripts/sync-frontend-assets.sh
 '''
 
 [tasks."smoke:assets"]
@@ -147,7 +141,7 @@ scripts/smoke-packaged-assets.sh --layout all --expect-missing-diagnostics
 '''
 
 [tasks."smoke:isolated-runtime"]
-description = "Verify isolated config/state and invalid explicit ccusage behavior"
+description = "Verify isolated config/state and local native runtime behavior"
 run = '''
 scripts/smoke-isolated-runtime.sh
 '''
@@ -200,7 +194,6 @@ if [ -z "$*" ]; then
   exit 2
 fi
 scripts/render-homebrew-formula.sh "$*" "../homebrew-tap/Formula/ccusage-gauge.rb"
-
 '''
 
 [tasks."build:homebrew-cask"]
@@ -225,7 +218,6 @@ if [ -z "$*" ]; then
   exit 2
 fi
 scripts/render-homebrew-cask.sh "$*" "../homebrew-tap/Casks/ccusage-gauge.rb"
-
 '''
 
 [tasks."release:homebrew-cask-local"]

@@ -127,3 +127,19 @@ Cache opening now reconciles staged clears and migrates the conventional local l
 ### Continuation 2
 
 Rechecked the accepted design and current implementation. UTC 15-minute flooring and day-scoped replacement cannot distinguish contributions from adjacent local days when midnight falls inside a bucket, and the compatible session schema has no source-day identity. The current conversion rejects these valid events; simply removing that guard risks loss or duplication. An accepted design amendment specifying a compatible source-day representation or coordinated adjacent-day replacement preserving cached-only history is required before this plan can be completed. Current scoped rustfmt and locked SQLite tests pass (14 tests; `continuation2-rustfmt.log`, `continuation2-test.log` in the plan evidence directory); these tests do not cover the unresolved boundary. Formal reviews remain downstream.
+
+### Continuation 3: source-day amendment
+
+Implemented the local-only nullable source-day migration and index, day-scoped writes and deletion, UTC bucket boundary handling, and coalesced range and day readback. Added shared-bucket, legacy preservation, repeat merge, reopen, and remote schema regression coverage. Required scoped formatter and SQLite suite are recorded in the plan evidence directory as `continuation3-rustfmt.log` and `continuation3-test.log`; formal reviews remain downstream.
+
+### Test-integrity revision
+
+Addressed RUST05-TI-01 with reverse-order uncovered merges, same-day uncovered and Antigravity replacement, complete legacy partition replacement, and trigger rollback/retry across the shared bucket. Addressed RUST05-TI-02 with an independently constructed populated Swift v1 database and repeated migration assertions. Final scoped verification logs: `ti-final-rustfmt.log` and `ti-final-test.log` in the plan evidence directory. Independent review remains downstream.
+
+### Adversarial revision
+
+RUST05-ADV-01: constrained clear transaction matching to UUID or nonempty single-token suffixes and made post-commit cleanup best effort. Added sibling isolation, interrupted and committed recovery, and sidecar clear coverage. Final verification logs are `adv-final-rustfmt.log` and `adv-final-test.log` in the plan evidence directory. Independent re-review remains downstream.
+
+### Integration review revision
+
+Resolved INT-WAVE8-RUST05-SHADOW-TYPES by re-exporting canonical shared cache types and converting SQLite REAL metadata timestamps to UTC, with regression coverage. Resolved INT-WAVE8-RUST05-CLIPPY with scoped type aliases and clone-free slices. The edition 2021 formatter and offline locked SQLite suite passed (21 tests); scoped Clippy passed with no diagnostics. Logs: `redispatch-final-rustfmt.log`, `redispatch-final-test.log`, and `redispatch-final-clippy.log` in the plan evidence directory. Implementation acceptance criteria are met; independent re-review and workflow finalization remain downstream.
