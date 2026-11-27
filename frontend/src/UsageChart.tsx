@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { attachChartPan } from "./chartPan";
 import type { CostRow, MachineDataGap, MachineLatestEvent, MetricKey } from "./api";
-import { alignedBucketStart, axisCurrency, bucketMilliseconds, chartDateLabel, clippedInterval, nextBucket, niceChartMaximum } from "./usageChartGeometry";
+import { alignedBucketStart, axisCurrency, bucketMilliseconds, buildChartBuckets, chartDateLabel, clippedInterval, niceChartMaximum } from "./usageChartGeometry";
 import { chartSeriesIdentity, chartSeriesLabel, compareSeriesIdentities, type StackBy } from "./usageChartSeries";
 
 type Granularity = "15min" | "hourly" | "6hour" | "daily";
@@ -52,7 +52,17 @@ export function UsageChart(props: {
     chartSeriesLabel(row, props.stackBy, props.subdirectoryLabel),
   ])));
   const displaySeries = (series: string) => seriesLabels().get(series) ?? series;
-  const models = createMemo(() => [...new Set(props.rows.map(seriesName))].sort((a, b) => compareSeriesIdentities(props.stackBy, a, b)));
+  const models = createMemo(() => {
+    const totals = new Map<string, number>();
+    for (const row of props.rows) {
+      const series = seriesName(row);
+      totals.set(series, (totals.get(series) ?? 0) + metricValue(row, props.metric));
+    }
+    return [...totals]
+      .filter(([, total]) => total > 0)
+      .map(([series]) => series)
+      .sort((a, b) => compareSeriesIdentities(props.stackBy, a, b));
+  });
   const occupiedPoints = createMemo(() => {
     const grouped = new Map<string, Map<string, number>>();
     for (const row of props.rows) {
@@ -78,16 +88,10 @@ export function UsageChart(props: {
   const points = createMemo(() => {
     const occupied = occupiedPoints();
     if (props.timelineStart == null || props.timelineEndExclusive == null) return occupied;
-    const start = alignedBucketStart(props.timelineStart, props.granularity);
-    const endExclusive = new Date(props.timelineEndExclusive);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(endExclusive.getTime()) || start >= endExclusive) return occupied;
+    const keys = buildChartBuckets(props.timelineStart, props.timelineEndExclusive, props.granularity);
+    if (keys.length === 0) return occupied;
     const occupiedByTimestamp = new Map(occupied.map((point) => [point.timestamp, point]));
-    const continuous = [];
-    for (let bucket = start; bucket < endExclusive; bucket = nextBucket(bucket, props.granularity)) {
-      const key = bucket.toISOString();
-      continuous.push(occupiedByTimestamp.get(key) ?? { timestamp: key, segments: [], total: 0 });
-    }
-    return continuous;
+    return keys.map((key) => occupiedByTimestamp.get(key) ?? { timestamp: key, segments: [], total: 0 });
   });
   const firstTimestamp = createMemo(() => points()[0] == null ? 0 : new Date(points()[0].timestamp).getTime());
   const lastTimestamp = createMemo(() => points().at(-1) == null ? 0 : new Date(points().at(-1)!.timestamp).getTime());

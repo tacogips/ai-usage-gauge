@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clippedInterval } from "../src/usageChartGeometry";
+import { buildChartBuckets, clippedInterval } from "../src/usageChartGeometry";
 import {
   compareSeriesIdentities,
   chartSeriesIdentity,
@@ -138,5 +138,30 @@ describe("modelEffort series", () => {
       "gpt-6-luna\u001fhigh",
       "gpt-6-luna\u001flow",
     ]);
+  });
+});
+
+describe("buildChartBuckets no-future-date invariant", () => {
+  test("never emits future buckets for 15min, hourly, 6hour, or daily even when endExclusive is in the future", () => {
+    const now = new Date(2026, 10, 27, 20, 47, 0, 0); // Nov 27, 2026 20:47 local
+    const todayStart = new Date(2026, 10, 27, 0, 0, 0, 0).toISOString();
+    const futureEnd = new Date(2026, 10, 30, 0, 0, 0, 0).toISOString();
+
+    for (const gran of ["15min", "hourly", "6hour"] as const) {
+      const buckets = buildChartBuckets(todayStart, futureEnd, gran, now.getTime());
+      expect(buckets.length).toBeGreaterThan(0);
+      for (const iso of buckets) {
+        expect(Date.parse(iso)).toBeLessThanOrEqual(now.getTime());
+      }
+    }
+
+    const sixHour = buildChartBuckets(todayStart, futureEnd, "6hour", now.getTime());
+    expect(sixHour.length).toBe(4);
+    expect(new Date(sixHour.at(-1)!).getHours()).toBe(18);
+    expect(new Date(sixHour.at(-1)!).getDate()).toBe(27);
+
+    const daily = buildChartBuckets(todayStart, futureEnd, "daily", now.getTime());
+    expect(daily.length).toBe(1);
+    expect(new Date(daily[0]).getDate()).toBe(27);
   });
 });

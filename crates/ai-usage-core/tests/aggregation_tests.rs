@@ -735,3 +735,55 @@ async fn multi_machine_collector_single_flight_fencing_and_stale_merge() {
     assert_eq!(historical.scope.included_machine_ids.len(), 2);
     assert_eq!(historical.snapshot.dashboard_sessions.len(), 2);
 }
+
+#[tokio::test]
+async fn single_flight_waiter_propagates_leader_failure() {
+    let now = at("2026-11-25T12:00:00Z");
+    let local_desc = MachineDescriptor {
+        id: "local".into(),
+        display_name: "Local".into(),
+        kind: MachineKind::Local,
+        enabled: true,
+        ssh: None,
+        codex_session_dirs: vec![],
+        claude_config_dirs: vec![],
+        include_default_codex_dir: false,
+        include_default_claude_dir: false,
+    };
+    let registry = MachineRegistry {
+        schema_version: 2,
+        local_session_sources: LocalSessionSources {
+            codex_session_dirs: vec![],
+            claude_config_dirs: vec![],
+            include_default_codex_dir: false,
+            include_default_claude_dir: false,
+        },
+        machines: vec![local_desc],
+    };
+
+    let mut snaps = BTreeMap::new();
+    snaps.insert(
+        "local".into(),
+        Err(SanitizedCollectionError {
+            code: "fetch_failed".into(),
+            message: "simulated fetch failure".into(),
+            detail: None,
+            remediation: None,
+        }),
+    );
+    let fetcher = Arc::new(MockFetcher {
+        calls: AtomicUsize::new(0),
+        delay_ms: 40,
+        snapshots: snaps,
+    });
+    let store = MachineSnapshotStore::new();
+    let collector = Arc::new(MachineCollector::new(store, fetcher.clone(), 30));
+    collector.reconcile_registry(&registry, 1).await.unwrap();
+
+    let (a, b) = tokio::join!(
+        collector.refresh_machine("local", None, now),
+        collector.refresh_machine("local", None, now)
+    );
+    assert!(!a && !b);
+    assert_eq!(fetcher.calls.load(Ordering::SeqCst), 1);
+}

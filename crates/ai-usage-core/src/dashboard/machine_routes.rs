@@ -9,7 +9,35 @@ use super::router::{MachineDashboardRouter, RouterResponse};
 impl MachineDashboardRouter {
     pub(super) async fn handle_list_machines(&self) -> RouterResponse {
         match self.registry_store.load() {
-            Ok(reg) => RouterResponse::json(200, &reg),
+            Ok(mut reg) => {
+                if !reg.machines.iter().any(|m| m.id == "local") {
+                    reg.machines.insert(
+                        0,
+                        MachineDescriptor {
+                            id: "local".into(),
+                            display_name: "Local".into(),
+                            kind: MachineKind::Local,
+                            enabled: true,
+                            ssh: None,
+                            codex_session_dirs: reg
+                                .local_session_sources
+                                .codex_session_dirs
+                                .clone(),
+                            claude_config_dirs: reg
+                                .local_session_sources
+                                .claude_config_dirs
+                                .clone(),
+                            include_default_codex_dir: reg
+                                .local_session_sources
+                                .include_default_codex_dir,
+                            include_default_claude_dir: reg
+                                .local_session_sources
+                                .include_default_claude_dir,
+                        },
+                    );
+                }
+                RouterResponse::json(200, &reg)
+            }
             Err(e) => RouterResponse::error(500, "registry_error", &e.to_string()),
         }
     }

@@ -25,6 +25,29 @@ export function nextBucket(date: Date, granularity: ChartGranularity) {
   return next;
 }
 
+export function buildChartBuckets(
+  timelineStart: string,
+  timelineEndExclusive: string,
+  granularity: ChartGranularity,
+  nowMs: number = Date.now(),
+): string[] {
+  const start = alignedBucketStart(timelineStart, granularity);
+  const rawEnd = new Date(timelineEndExclusive);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(rawEnd.getTime()) || start >= rawEnd) {
+    return [];
+  }
+  const nowDate = new Date(nowMs);
+  const capMs = granularity === "daily"
+    ? new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() + 1).getTime()
+    : nowMs + 1_000;
+  const endExclusiveMs = Math.min(rawEnd.getTime(), capMs);
+  const buckets: string[] = [];
+  for (let bucket = start; bucket.getTime() < endExclusiveMs; bucket = nextBucket(bucket, granularity)) {
+    buckets.push(bucket.toISOString());
+  }
+  return buckets;
+}
+
 export function chartDateLabel(timestamp: string, granularity: ChartGranularity) {
   const date = new Date(timestamp);
   return {

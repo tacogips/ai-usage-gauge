@@ -121,15 +121,20 @@ export function BreakdownBars(props: {
   rows: BreakdownRow[];
   metric: MetricKey;
   keyOf: (row: BreakdownRow) => string;
+  labelOf?: (key: string) => string;
   colorFor: (key: string) => string;
   label: string;
 }) {
+  const displayLabel = (key: string) => props.labelOf ? props.labelOf(key) : key;
   const totals = createMemo(() => {
     const map = new Map<string, number>();
     for (const row of props.rows) {
       map.set(props.keyOf(row), (map.get(props.keyOf(row)) ?? 0) + row[props.metric]);
     }
-    return [...map].map(([key, value]) => ({ key, value })).sort((left, right) => right.value - left.value);
+    return [...map]
+      .filter(([, value]) => value > 0)
+      .map(([key, value]) => ({ key, value }))
+      .sort((left, right) => right.value - left.value);
   });
   const maximum = createMemo(() => Math.max(...totals().map((entry) => entry.value), 0) || 1);
   const grandTotal = createMemo(() => totals().reduce((sum, entry) => sum + entry.value, 0));
@@ -140,12 +145,12 @@ export function BreakdownBars(props: {
       <div class="breakdown-bars" role="img" aria-label={`${props.metric} total ${props.label} for the selected period`}>
         <For each={totals()}>{(entry) => (
           <div class="breakdown-bar-row">
-            <span class="breakdown-name" data-tooltip={entry.key}>
+            <span class="breakdown-name" data-tooltip={displayLabel(entry.key)}>
               <i class="breakdown-swatch" style={{ background: props.colorFor(entry.key) }} aria-hidden="true" />
-              <span class="breakdown-label">{entry.key}</span>
+              <span class="breakdown-label">{displayLabel(entry.key)}</span>
             </span>
             <div class="breakdown-track">
-              <div class="breakdown-fill" style={{ width: `${(entry.value / maximum()) * 100}%`, background: props.colorFor(entry.key) }} title={`${entry.key}: ${format(entry.value)} · ${share(entry.value)}%`} />
+              <div class="breakdown-fill" style={{ width: `${(entry.value / maximum()) * 100}%`, background: props.colorFor(entry.key) }} title={`${displayLabel(entry.key)}: ${format(entry.value)} · ${share(entry.value)}%`} />
             </div>
             <span class="breakdown-value">{format(entry.value)}<small> · {share(entry.value)}%</small></span>
           </div>

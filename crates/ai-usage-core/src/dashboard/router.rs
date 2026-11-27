@@ -5,6 +5,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
 use percent_encoding::percent_decode_str;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
@@ -129,12 +130,16 @@ impl MachineDashboardRouter {
             ("GET", "/api/rate-limits") => self.handle_rate_limits(now).await,
             ("GET", "/api/machine-status") => {
                 let statuses = self.collector.store.statuses().await;
-                RouterResponse::json(200, &json!({ "machines": statuses }))
+                RouterResponse::json(
+                    200,
+                    &json!({
+                        "requested": params.get_one("machine").unwrap_or("all"),
+                        "generatedAt": now,
+                        "machines": statuses,
+                    }),
+                )
             }
-            ("GET", "/api/load-status") => {
-                let progress = self.collector.store.range_progress().await;
-                RouterResponse::json(200, &json!({ "progress": progress }))
-            }
+            ("GET", "/api/load-status") => self.handle_load_status(&params).await,
             ("GET", "/api/refresh") => {
                 self.collector.refresh_all(None, now).await;
                 let statuses = self.collector.store.statuses().await;
@@ -151,8 +156,8 @@ impl MachineDashboardRouter {
                 self.handle_set_directory_name(&req.body, now).await
             }
             ("GET", "/api/dashboard-state") => match self.dashboard_state_store.load() {
-                Ok(Some(s)) => RouterResponse::json(200, &s),
-                Ok(None) => RouterResponse::json(200, &Value::Null),
+                Ok(Some(s)) => RouterResponse::json(200, &json!({ "state": s })),
+                Ok(None) => RouterResponse::json(200, &json!({ "state": Value::Null })),
                 Err(_) => RouterResponse::error(
                     503,
                     "dashboard_state_unavailable",
@@ -251,6 +256,91 @@ impl MachineDashboardRouter {
             }
         }
         None
+    }
+
+    async fn handle_load_status(&self, params: &QueryParams) -> RouterResponse {
+        let progress = self.collector.store.range_progress().await;
+        let statuses = self.collector.store.statuses().await;
+        let enabled: Vec<_> = statuses.into_iter().filter(|s| s.enabled).collect();
+        let total = enabled.len().max(1);
+        let mut completed = 0usize;
+        let mut any_loading = progress.as_ref().is_some_and(|p| p.is_loading);
+        let mut any_error = false;
+        let mut any_snapshot = false;
+
+        let machines: Vec<Value> = enabled
+            .iter()
+            .map(|st| {
+                let is_loading = st.collection_in_progress
+                    || (!st.snapshot_available
+                        && matches!(
+                            st.collection_state,
+                            crate::types::MachineCollectionState::NeverCollected
+                        ));
+                if is_loading {
+                    any_loading = true;
+                }
+                if st.snapshot_available {
+                    any_snapshot = true;
+                    completed += 1;
+                } else if matches!(st.collection_state, crate::types::MachineCollectionState::Error)
+                {
+                    any_error = true;
+                    completed += 1;
+                }
+                let phase = if is_loading {
+                    "loadingWeek"
+                } else if st.snapshot_available {
+                    "ready"
+                } else if matches!(st.collection_state, crate::types::MachineCollectionState::Error)
+                {
+                    "failed"
+                } else {
+                    "idle"
+                };
+                let message = match phase {
+                    "loadingWeek" => "Loading usage data".to_owned(),
+                    "ready" => "Usage data is ready".to_owned(),
+                    "failed" => st
+                        .last_error
+                        .as_ref()
+                        .map(|e| e.message.clone())
+                        .unwrap_or_else(|| "Usage data loading failed".to_owned()),
+                    _ => "Waiting to load".to_owned(),
+                };
+                json!({
+                    "id": st.id,
+                    "phase": phase,
+                    "message": message,
+                    "completed": usize::from(st.snapshot_available),
+                    "total": 1,
+                    "isLoading": is_loading,
+                    "coverageStart": st.coverage_start,
+                })
+            })
+            .collect();
+
+        let (phase, message) = if any_loading {
+            ("loadingWeek", "Loading usage data")
+        } else if any_snapshot || !any_error {
+            ("ready", "Usage data is ready")
+        } else {
+            ("failed", "Usage data loading failed")
+        };
+
+        RouterResponse::json(
+            200,
+            &json!({
+                "phase": phase,
+                "message": message,
+                "completed": completed,
+                "total": total,
+                "isLoading": any_loading,
+                "requested": params.get_one("machine").unwrap_or("all"),
+                "machines": machines,
+                "progress": progress,
+            }),
+        )
     }
 
     async fn handle_rate_limits(&self, now: DateTime<Utc>) -> RouterResponse {
@@ -461,6 +551,8 @@ impl MachineDashboardRouter {
             Ok(v) => v,
             Err(r) => return r,
         };
+        self.trigger_historical_backfill_if_needed(&selected, start, now)
+            .await;
         let merged = self
             .merged_for_selection(&selected, &label, disp, now)
             .await;
@@ -476,6 +568,38 @@ impl MachineDashboardRouter {
         )
     }
 
+    /// Trigger an async background backfill when a requested range (`month`, `custom`, etc.)
+    /// starts earlier than a selected machine's current cached coverage.
+    async fn trigger_historical_backfill_if_needed(
+        &self,
+        selected: &[String],
+        start: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) {
+        let requested_start_day = start.with_timezone(&self.timezone).date_naive();
+        let requested_str = requested_start_day.format("%Y-%m-%d").to_string();
+        let statuses = self.collector.store.statuses().await;
+        for st in statuses {
+            if !st.enabled || !selected.contains(&st.id) || st.collection_in_progress {
+                continue;
+            }
+            let needs_backfill = match &st.coverage_start {
+                None => true,
+                Some(cov) => requested_str < *cov,
+            };
+            if needs_backfill {
+                let col = self.collector.clone();
+                let id = st.id.clone();
+                // Mark in-progress synchronously so immediate /api/load-status polls see isLoading=true.
+                let _ = self.collector.store.begin_attempt(&id, now).await;
+                tokio::spawn(async move {
+                    col.refresh_machine(&id, Some(requested_start_day), now)
+                        .await;
+                });
+            }
+        }
+    }
+
     async fn handle_metrics(&self, params: &QueryParams, now: DateTime<Utc>) -> RouterResponse {
         let (selected, label) = match self.select_machines(params).await {
             Ok(v) => v,
@@ -489,6 +613,8 @@ impl MachineDashboardRouter {
             Ok(v) => v,
             Err(r) => return r,
         };
+        self.trigger_historical_backfill_if_needed(&selected, start, now)
+            .await;
         let use_sessions = params.get_one("range") == Some("recent12h");
         let merged = self
             .merged_for_selection(&selected, &label, disp, now)
@@ -501,17 +627,29 @@ impl MachineDashboardRouter {
             &dir_filter,
             self.timezone,
         );
+        let range_label = params.get_one("range").unwrap_or("today");
+        let total_cost_num = resp.total_cost_usd.to_f64().unwrap_or(0.0);
         RouterResponse::json(
             200,
             &json!({
+                "range": range_label,
                 "generatedAt": resp.generated_at,
-                "totalCostUsd": resp.total_cost_usd,
+                "rows": resp.records,
+                "records": resp.records,
+                "totals": {
+                    "costUSD": total_cost_num,
+                    "inputTokens": resp.input_tokens,
+                    "outputTokens": resp.output_tokens,
+                    "cacheCreationTokens": resp.cache_creation_tokens,
+                    "cacheReadTokens": resp.cache_read_tokens,
+                    "totalTokens": resp.total_tokens,
+                },
+                "totalCostUsd": total_cost_num,
                 "totalTokens": resp.total_tokens,
                 "inputTokens": resp.input_tokens,
                 "outputTokens": resp.output_tokens,
                 "cacheCreationTokens": resp.cache_creation_tokens,
                 "cacheReadTokens": resp.cache_read_tokens,
-                "records": resp.records,
                 "scope": merged.scope,
                 "machineLatestEvents": merged.machine_latest_events,
             }),
@@ -539,10 +677,13 @@ impl MachineDashboardRouter {
         if !["15min", "hourly", "6hour", "daily"].contains(&granularity) {
             return RouterResponse::error(400, "invalid_granularity", "Invalid granularity.");
         }
+        let range_label = params.get_one("range").unwrap_or("today");
         let (start, end, disp) = match resolve_range_bounds(params, now, self.timezone) {
             Ok(v) => v,
             Err(r) => return r,
         };
+        self.trigger_historical_backfill_if_needed(&selected, start, now)
+            .await;
         let merged = self
             .merged_for_selection(&selected, &label, disp, now)
             .await;
@@ -556,12 +697,37 @@ impl MachineDashboardRouter {
             &dir_filter,
             self.timezone,
         );
+        let total_usd: f64 = resp
+            .points
+            .iter()
+            .map(|p| p.cost_usd.to_f64().unwrap_or(0.0))
+            .sum();
+        // Do not extend X-axis buckets into unreached future hours (sub-daily) or future days (daily).
+        let today = now.with_timezone(&self.timezone).date_naive();
+        let next_local_midnight =
+            local_midnight_utc(today.succ_opt().unwrap_or(today), self.timezone);
+        let timeline_end = if granularity == "daily" {
+            if end > next_local_midnight {
+                next_local_midnight.max(start)
+            } else {
+                end
+            }
+        } else if end > now {
+            (now + Duration::seconds(1)).max(start).min(end)
+        } else {
+            end
+        };
         RouterResponse::json(
             200,
             &json!({
+                "range": range_label,
                 "generatedAt": resp.generated_at,
                 "granularity": resp.granularity,
+                "timelineStart": start,
+                "timelineEndExclusive": timeline_end,
+                "rows": resp.points,
                 "points": resp.points,
+                "totalUSD": total_usd,
                 "scope": merged.scope,
                 "machineLatestEvents": merged.machine_latest_events,
             }),
@@ -590,16 +756,31 @@ impl MachineDashboardRouter {
             now,
             self.timezone,
         );
-        RouterResponse::json(
-            200,
-            &json!({
-                "generatedAt": resp.generated_at,
-                "activeBoundaryAt": resp.active_boundary_at,
-                "resetCycle": resp.reset_cycle,
-                "budget": resp.budget,
-                "scope": merged.scope,
-            }),
-        )
+        let poll_interval = self.config.read().await.poll_interval_seconds;
+        let refresh_interval = state.refresh_interval_seconds.unwrap_or(poll_interval);
+        let mut body = json!({
+            "generatedAt": resp.generated_at,
+            "activeBoundaryAt": resp.active_boundary_at,
+            "resetCycle": resp.reset_cycle,
+            "refreshIntervalSeconds": refresh_interval,
+            "spentUSD": resp.budget.spent_usd.to_f64().unwrap_or(0.0),
+            "overageUSD": resp.budget.overage_usd.to_f64().unwrap_or(0.0),
+            "budget": resp.budget,
+            "scope": merged.scope,
+        });
+        if let Some(v) = resp.budget.budget_usd.and_then(|d| d.to_f64()) {
+            body["budgetUSD"] = json!(v);
+        }
+        if let Some(v) = resp.budget.remaining_usd.and_then(|d| d.to_f64()) {
+            body["remainingUSD"] = json!(v);
+        }
+        if let Some(v) = resp.budget.usage_percentage.and_then(|d| d.to_f64()) {
+            body["usagePercentage"] = json!(v);
+        }
+        if let Some(v) = resp.budget.visual_fraction.and_then(|d| d.to_f64()) {
+            body["visualFraction"] = json!(v);
+        }
+        RouterResponse::json(200, &body)
     }
 
     async fn handle_subdirectories(
@@ -652,7 +833,22 @@ impl MachineDashboardRouter {
             }
         }
 
+        let machines: Vec<serde_json::Value> = directories
+            .iter()
+            .map(|(m, dirs)| {
+                let mut obj = json!({
+                    "machine": m,
+                    "directories": dirs,
+                });
+                if let Some(names_map) = filtered_names.get(m) {
+                    obj["names"] = json!(names_map);
+                }
+                obj
+            })
+            .collect();
+
         let mut body = json!({
+            "machines": machines,
             "directories": directories,
         });
         if !filtered_names.is_empty() {
@@ -726,10 +922,15 @@ impl MachineDashboardRouter {
             Ok((ids, _)) => ids,
             Err(r) => return r,
         };
+        let desired_from = params
+            .get_one("from")
+            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+        let now = Utc::now();
         let mut results = Vec::new();
         let mut ok_count = 0usize;
         let mut err_count = 0usize;
         for id in targets {
+            self.collector.reset_machine_cache(&id).await;
             match self.paths.aggregation_cache_file_for_machine(&id) {
                 Ok(path) => {
                     let cleared = if path.exists() {
@@ -737,9 +938,26 @@ impl MachineDashboardRouter {
                     } else {
                         Ok(())
                     };
+                    if cleared.is_ok() {
+                        for suffix in ["-wal", "-shm"] {
+                            let mut sidecar = path.as_os_str().to_os_string();
+                            sidecar.push(suffix);
+                            let sidecar_path = std::path::PathBuf::from(sidecar);
+                            if sidecar_path.exists() {
+                                let _ = fs::remove_file(&sidecar_path);
+                            }
+                        }
+                    }
                     match cleared {
                         Ok(()) => {
                             ok_count += 1;
+                            let collector = self.collector.clone();
+                            let machine_id = id.clone();
+                            tokio::spawn(async move {
+                                collector
+                                    .refresh_machine(&machine_id, desired_from, now)
+                                    .await;
+                            });
                             results.push(json!({ "machine": id, "status": "ok" }));
                         }
                         Err(_) => {

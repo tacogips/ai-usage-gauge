@@ -12,7 +12,7 @@ use tauri::{Manager, WindowEvent};
 use tokio::sync::Notify;
 
 use ai_usage_core::aggregation::collector::{
-    FetchFuture, MachineCollector, MachineSnapshotFetcher, MachineSnapshotStore,
+    FetchFuture, MachineCollector, MachineSnapshotFetcher, MachineSnapshotStore, ResetCacheFuture,
 };
 use ai_usage_core::aggregation::snapshot_service::SnapshotService;
 use ai_usage_core::cache::DashboardDirectoryNameStore;
@@ -22,7 +22,9 @@ use ai_usage_core::paths::AppPaths;
 use ai_usage_core::pricing::PricingEngine;
 use ai_usage_core::rate_limits::service::RateLimitUsageService;
 use ai_usage_core::remote::registry::MachineRegistryStore;
-use ai_usage_core::state::StateStore;
+use ai_usage_core::state::{
+    PieChartSelection, RatioTextSelection, ResetWindowCalculator, StateStore,
+};
 use ai_usage_core::types::{
     AppConfiguration, AppState, DirectoryNameLifecycle, MachineDescriptor, MachineKind,
     MachineRegistry, MachineRuntimeReconciler, PieChartId, RateLimitProvider, ResetCycle,
@@ -42,6 +44,7 @@ struct AppRuntime {
     state_store: StateStore,
     config: AppConfiguration,
     tz: Tz,
+    wake_render: Arc<Notify>,
 }
 
 #[tauri::command]
@@ -58,6 +61,8 @@ async fn dashboard_request(
 
 struct LocalTrayFetcher {
     service: Arc<std::sync::Mutex<SnapshotService>>,
+    store: MachineSnapshotStore,
+    wake_render: Arc<Notify>,
     state: AppState,
     config: AppConfiguration,
     tz: Tz,
@@ -80,6 +85,9 @@ impl MachineSnapshotFetcher for LocalTrayFetcher {
                 });
             }
             let service = self.service.clone();
+            let store = self.store.clone();
+            let wake = self.wake_render.clone();
+            let rt_handle = tokio::runtime::Handle::current();
             let descriptor = descriptor.clone();
             let state = self.state.clone();
             let config = self.config.clone();
@@ -88,7 +96,22 @@ impl MachineSnapshotFetcher for LocalTrayFetcher {
                 let mut svc = service
                     .lock()
                     .map_err(|_| "local snapshot service lock poisoned".to_owned())?;
-                svc.refresh_local(&descriptor, &state, &config, now, tz, desired_from)
+                svc.refresh_local_with_progress(
+                    &descriptor,
+                    &state,
+                    &config,
+                    now,
+                    tz,
+                    desired_from,
+                    &mut |partial| {
+                        let store_clone = store.clone();
+                        let wake_clone = wake.clone();
+                        rt_handle.spawn(async move {
+                            store_clone.publish_progress("local", partial, now).await;
+                            wake_clone.notify_one();
+                        });
+                    },
+                )
             })
             .await
             .map_err(|e| SanitizedCollectionError {
@@ -103,6 +126,24 @@ impl MachineSnapshotFetcher for LocalTrayFetcher {
                 detail: None,
                 remediation: None,
             })
+        })
+    }
+
+    fn reset_cache<'a>(&'a self, machine_id: &'a str) -> ResetCacheFuture<'a> {
+        let is_local = machine_id == "local";
+        let service = self.service.clone();
+        let wake = self.wake_render.clone();
+        Box::pin(async move {
+            if !is_local {
+                return;
+            }
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Ok(mut svc) = service.lock() {
+                    svc.reset_cache_state();
+                }
+            })
+            .await;
+            wake.notify_one();
         })
     }
 }
@@ -189,20 +230,35 @@ fn build_runtime(paths: &AppPaths) -> Result<Arc<AppRuntime>, String> {
         .aggregation_cache_file_for_machine("local")
         .map_err(|e| e.to_string())?;
     let tz = local_timezone();
+    let store = MachineSnapshotStore::new();
+    let wake_render = Arc::new(Notify::new());
+    let snapshot_service = Arc::new(std::sync::Mutex::new(SnapshotService::new(
+        cache_path,
+        PricingEngine::default(),
+        antigravity_root_from_env(&env),
+        env,
+    )));
+    // Pre-seed SQLite historical cache immediately (< 5ms, zero JSONL I/O) before live scan starts.
+    let cached_seed = registry
+        .machines
+        .iter()
+        .find(|m| m.id == "local")
+        .and_then(|local_desc| {
+            snapshot_service
+                .lock()
+                .ok()?
+                .load_cached_snapshot(local_desc, &state, &config, Utc::now(), tz)
+        });
     let fetcher = Arc::new(LocalTrayFetcher {
-        service: Arc::new(std::sync::Mutex::new(SnapshotService::new(
-            cache_path,
-            PricingEngine::default(),
-            antigravity_root_from_env(&env),
-            env,
-        ))),
+        service: snapshot_service,
+        store: store.clone(),
+        wake_render: wake_render.clone(),
         state: state.clone(),
         config: config.clone(),
         tz,
     });
-    let store = MachineSnapshotStore::new();
     let collector = Arc::new(MachineCollector::new(
-        store,
+        store.clone(),
         fetcher,
         config.poll_interval_seconds,
     ));
@@ -211,6 +267,9 @@ fn build_runtime(paths: &AppPaths) -> Result<Arc<AppRuntime>, String> {
     let col_clone = collector.clone();
     tauri::async_runtime::block_on(async move {
         let _ = col_clone.reconcile_registry(&reg_clone, 1).await;
+        if let Some(seed) = cached_seed {
+            store.publish_progress("local", seed, Utc::now()).await;
+        }
     });
 
     let rate_limits = RateLimitUsageService::production(paths).ok().map(Arc::new);
@@ -230,6 +289,7 @@ fn build_runtime(paths: &AppPaths) -> Result<Arc<AppRuntime>, String> {
         state_store,
         config,
         tz,
+        wake_render,
     }))
 }
 
@@ -444,7 +504,8 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
     let ratio_sep = PredefinedMenuItem::separator(app)?;
     let mut ratio_check_items: Vec<(PieChartId, CheckMenuItem<tauri::Wry>)> = Vec::new();
     for id in PieChartId::menu_bar_cases() {
-        let checked = initial_state.menu_bar_ratio_labels.contains(&id);
+        let checked = initial_state.menu_bar_ratio_labels.contains(&id)
+            && (id != PieChartId::Budget || !initial_state.menu_bar_cost_only);
         let item = CheckMenuItem::with_id(
             app,
             format!("ratio:{}", pie_chart_id_key(id)),
@@ -502,10 +563,10 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
         &[&cycle_hourly, &cycle_daily, &cycle_weekly, &cycle_monthly],
     )?;
 
-    let toggle_dash = MenuItem::with_id(
+    let open_dash = MenuItem::with_id(
         app,
-        "toggle_dashboard",
-        "Open dashboard window",
+        "open_dashboard",
+        "Open dashboard",
         true,
         None::<&str>,
     )?;
@@ -527,28 +588,33 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
     let menu = Menu::with_items(
         app,
         &[
-            &summary_item,
-            &claude_item,
-            &codex_item,
-            &gemini_item,
+            &open_dash,
+            &refresh_item,
             &sep1,
             &usage_icons_submenu,
             &ratio_text_submenu,
             &cycle_submenu,
-            &sep2,
-            &toggle_dash,
-            &refresh_item,
             &launch_item,
+            &sep2,
+            &summary_item,
+            &claude_item,
+            &codex_item,
+            &gemini_item,
             &sep3,
             &quit_item,
         ],
     )?;
 
     let renderer = TrayIconRenderer::new();
+    // Load cached rate limits synchronously (< 1ms) so vendor fill gauges appear on frame 0.
+    let initial_rl = runtime
+        .rate_limits
+        .as_ref()
+        .and_then(|svc| svc.cached_snapshot(Utc::now()));
     let initial_vm = TrayViewModel::build(
         &initial_state,
         None,
-        None,
+        initial_rl.as_ref(),
         None,
         false,
         runtime.config.poll_interval_seconds,
@@ -564,12 +630,15 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
         tray_builder = tray_builder.icon(Image::new_owned(r.rgba, r.width, r.height));
     }
 
-    let wake_render = Arc::new(Notify::new());
+    let wake_render = runtime.wake_render.clone();
     let wake_refresh = Arc::new(Notify::new());
+    let wake_rate_limits = Arc::new(Notify::new());
+    let latest_rate_limits = Arc::new(tokio::sync::RwLock::new(initial_rl));
 
     let rt_menu = runtime.clone();
     let wake_render_menu = wake_render.clone();
     let wake_refresh_menu = wake_refresh.clone();
+    let wake_rl_menu = wake_rate_limits.clone();
     let icon_items_menu = icon_check_items.clone();
     let ratio_items_menu = ratio_check_items.clone();
     let ratio_cost_menu = ratio_cost_item.clone();
@@ -592,17 +661,8 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
                     tauri::async_runtime::spawn(async move {
                         let updated = {
                             let mut st = rt.router.state.write().await;
-                            if st.menu_bar_pie_charts.contains(&chart_id) {
-                                if st.menu_bar_pie_charts.len() > 1 {
-                                    st.menu_bar_pie_charts.retain(|x| *x != chart_id);
-                                }
-                            } else {
-                                st.menu_bar_pie_charts.push(chart_id);
-                                st.menu_bar_pie_charts.sort_by_key(|x| {
-                                    PieChartId::ALL.iter().position(|p| p == x).unwrap_or(99)
-                                });
-                            }
-                            st.menu_bar_cost_only = false;
+                            st.menu_bar_pie_charts =
+                                PieChartSelection::toggled(chart_id, &st.menu_bar_pie_charts);
                             let _ = rt.state_store.save(&st);
                             st.menu_bar_pie_charts.clone()
                         };
@@ -645,19 +705,40 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
                     let items = ratio_items_menu.clone();
                     let handle = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
-                        let labels = {
+                        let (labels, cost_only) = {
                             let mut st = rt.router.state.write().await;
-                            if st.menu_bar_ratio_labels.contains(&chart_id) {
-                                st.menu_bar_ratio_labels.retain(|x| *x != chart_id);
+                            if chart_id == PieChartId::Budget {
+                                let currently_shown = st
+                                    .menu_bar_ratio_labels
+                                    .contains(&PieChartId::Budget)
+                                    && !st.menu_bar_cost_only;
+                                if currently_shown {
+                                    st.menu_bar_cost_only = true;
+                                    st.menu_bar_ratio_labels
+                                        .retain(|id| *id != PieChartId::Budget);
+                                } else {
+                                    st.menu_bar_cost_only = false;
+                                    if !st.menu_bar_ratio_labels.contains(&PieChartId::Budget) {
+                                        st.menu_bar_ratio_labels = RatioTextSelection::toggled(
+                                            PieChartId::Budget,
+                                            &st.menu_bar_ratio_labels,
+                                        );
+                                    }
+                                }
                             } else {
-                                st.menu_bar_ratio_labels.push(chart_id);
+                                st.menu_bar_ratio_labels = RatioTextSelection::toggled(
+                                    chart_id,
+                                    &st.menu_bar_ratio_labels,
+                                );
                             }
                             let _ = rt.state_store.save(&st);
-                            st.menu_bar_ratio_labels.clone()
+                            (st.menu_bar_ratio_labels.clone(), st.menu_bar_cost_only)
                         };
                         let _ = handle.run_on_main_thread(move || {
                             for (cid, item) in &items {
-                                let _ = item.set_checked(labels.contains(cid));
+                                let checked = labels.contains(cid)
+                                    && (*cid != PieChartId::Budget || !cost_only);
+                                let _ = item.set_checked(checked);
                             }
                         });
                         wake.notify_one();
@@ -681,7 +762,14 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
                     tauri::async_runtime::spawn(async move {
                         {
                             let mut st = rt.router.state.write().await;
-                            st.reset_cycle = cycle.clone();
+                            if let Ok(next_state) = ResetWindowCalculator::new(rt.tz)
+                                .changing(&st, cycle.clone(), Utc::now())
+                            {
+                                *st = next_state;
+                            } else {
+                                st.reset_cycle = cycle.clone();
+                                st.baseline = None;
+                            }
                             let _ = rt.state_store.save(&st);
                         }
                         let _ = handle.run_on_main_thread(move || {
@@ -696,19 +784,16 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
                 return;
             }
             match id_str {
-                "toggle_dashboard" => {
+                "open_dashboard" => {
                     if let Some(win) = app_handle.get_webview_window("main") {
-                        if win.is_visible().unwrap_or(false) {
-                            let _ = win.hide();
-                        } else {
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
+                        let _ = win.unminimize();
+                        let _ = win.show();
+                        let _ = win.set_focus();
                     }
-                    wake_render_menu.notify_one();
                 }
                 "refresh" => {
                     wake_refresh_menu.notify_one();
+                    wake_rl_menu.notify_one();
                 }
                 "launch_at_login" => {
                     let next = LaunchAtLoginController::status() != LaunchAtLoginState::On;
@@ -724,15 +809,51 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
 
     let handle = app.handle().clone();
     let poll_secs = runtime.config.poll_interval_seconds.max(5);
+
+    // Task A: Independent rate-limit poller — fetches fresh Claude/Codex/Gemini usage
+    // immediately on startup without waiting for JSONL log scanning, and wakes tray render.
+    if let Some(rl_svc) = runtime.rate_limits.clone() {
+        let rl_slot = latest_rate_limits.clone();
+        let wake_r = wake_render.clone();
+        let wake_rl = wake_rate_limits.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                let fresh = rl_svc.current().await;
+                *rl_slot.write().await = Some(fresh);
+                wake_r.notify_one();
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(u64::from(poll_secs))) => {}
+                    _ = wake_rl.notified() => {}
+                }
+            }
+        });
+    }
+
+    // Task B: Independent usage collector poller — runs progressive 5-worker JSONL scan
+    // in the background and wakes tray render on each slice and on final completion.
+    {
+        let col = runtime.collector.clone();
+        let wake_r = wake_render.clone();
+        let wake_col = wake_refresh.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                col.refresh_all(None, Utc::now()).await;
+                wake_r.notify_one();
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(u64::from(poll_secs))) => {}
+                    _ = wake_col.notified() => {}
+                }
+            }
+        });
+    }
+
+    // Task C: Non-blocking tray renderer — never awaits I/O or network; renders immediately
+    // whenever cached rate limits, fresh rate limits, progressive scan slices, or menu toggles fire.
     tauri::async_runtime::spawn(async move {
         let mut dedup = TrayPresentationDedup::default();
         let renderer = TrayIconRenderer::new();
-        let mut need_collect = true;
         loop {
             let now = Utc::now();
-            if need_collect {
-                runtime.collector.refresh_all(None, now).await;
-            }
             let state = runtime.router.state.read().await.clone();
             let merged = runtime
                 .collector
@@ -744,10 +865,7 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
                     runtime.tz,
                 )
                 .await;
-            let rl = match &runtime.rate_limits {
-                Some(svc) => Some(svc.current().await),
-                None => None,
-            };
+            let rl = latest_rate_limits.read().await.clone();
             let dash_open = handle
                 .get_webview_window("main")
                 .and_then(|w| w.is_visible().ok())
@@ -775,7 +893,6 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
             let claude_ref = claude_item.clone();
             let codex_ref = codex_item.clone();
             let gemini_ref = gemini_item.clone();
-            let toggle_ref = toggle_dash.clone();
             let rendered_opt = if update_icon {
                 renderer.render_strip(&vm.render_state)
             } else {
@@ -796,20 +913,9 @@ fn setup_tray(app: &mut tauri::App, runtime: Arc<AppRuntime>) -> tauri::Result<(
                 let _ = claude_ref.set_text(&claude_line);
                 let _ = codex_ref.set_text(&codex_line);
                 let _ = gemini_ref.set_text(&gemini_line);
-                let _ = toggle_ref.set_text(&vm.dashboard_toggle_label);
             });
 
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(u64::from(poll_secs))) => {
-                    need_collect = true;
-                }
-                _ = wake_refresh.notified() => {
-                    need_collect = true;
-                }
-                _ = wake_render.notified() => {
-                    need_collect = false;
-                }
-            }
+            wake_render.notified().await;
         }
     });
 

@@ -121,6 +121,32 @@ impl RateLimitUsageService {
             Some(RateLimitObservationFileStore::new(&paths.rate_limits_file)),
         ))
     }
+    /// Load persisted rate-limit observations synchronously from disk (< 1ms, zero network)
+    /// so the menu bar can render vendor usage gauges immediately on launch.
+    pub fn cached_snapshot(&self, now: DateTime<Utc>) -> Option<RateLimitsResponse> {
+        let store = self.store.as_ref()?;
+        let mut map = store.load().ok()?;
+        if map.is_empty() {
+            return None;
+        }
+        let providers = [
+            (Provider::Claude, "claude"),
+            (Provider::Codex, "codex"),
+            (Provider::Gemini, "gemini"),
+        ]
+        .into_iter()
+        .map(|(provider, key)| match map.remove(key) {
+            Some(obs) => entry(provider, Status::Ok, None, Some(obs)),
+            None => entry(provider, Status::Unavailable, None, None),
+        })
+        .collect();
+        Some(RateLimitsResponse {
+            generated_at: now,
+            scope: "local".into(),
+            providers,
+        })
+    }
+
     pub async fn current(&self) -> RateLimitsResponse {
         let now = Utc::now();
         let (a, b, c) = tokio::join!(self.entry(0, now), self.entry(1, now), self.entry(2, now));

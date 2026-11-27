@@ -51,7 +51,7 @@ import {
   wholeMachineSelected,
 } from "./machineScope";
 import { allocateModelColors, effortShade, seriesColor } from "./seriesColors";
-import { directorySeriesDisplayLabel, modelEffortParts, type StackBy } from "./usageChartSeries";
+import { directorySeriesDisplayLabel, modelDisplayName, modelEffortParts, type StackBy } from "./usageChartSeries";
 import { UsageChart } from "./UsageChart";
 // @ts-expect-error TS5097: the explicit extension selects this component over the case-only rangeControls.ts helper.
 import { RangeControls } from "./RangeControls.tsx";
@@ -372,15 +372,27 @@ export default function App() {
     (period() == null && !periodAvailabilityError())
     || costSeries() == null
     || (budget() == null && !budgetAvailabilityError()));
+  const hasAnyDashboardData = createMemo(() =>
+    costSeries() != null
+    || period() != null
+    || budget() != null
+    || (machineStatuses()?.machines.length ?? 0) > 0);
+  const isCostViewPending = createMemo(() => costSeries() == null && (costSeries.loading || isRangeLoading()));
+  const hasVisibleChartData = createMemo(() =>
+    filteredCostRows().some((row) => metricValue(row, chartMetric()) > 0));
+  const isChartLoading = createMemo(() =>
+    Boolean(loadStatus()?.isLoading) || costSeries.loading || isRangeLoading());
+  const isChartEmptyAndLoading = createMemo(() => !hasVisibleChartData() && isChartLoading());
   const isBlockingLoading = createMemo(() => shouldBlockDashboard({
     isInitialLoading: isInitialLoading(),
     isRangeLoading: isRangeLoading(),
     isFetching: period.loading || costSeries.loading || budget.loading,
     hasFailedRequest: period.error != null || costSeries.error != null || budget.error != null,
+    hasAnyData: hasAnyDashboardData(),
     loadStatus: loadStatus(),
   }));
   const isBackgroundLoading = createMemo(() => !isBlockingLoading() &&
-    (loadStatus()?.isLoading || isRefreshing() || period.loading || costSeries.loading || budget.loading));
+    (loadStatus()?.isLoading || isRefreshing() || isRangeLoading() || period.loading || costSeries.loading || budget.loading));
   const visibleRangeLoad = createMemo(() => period()?.rangeLoad ?? costSeries()?.rangeLoad);
   const toggleModel = (model: string) => setSelectedModels((current) => current.includes(model)
     ? current.filter((item) => item !== model)
@@ -564,24 +576,29 @@ export default function App() {
     return refreshPromise;
   };
   const clearCache = async () => {
-    if (isClearingCache() || !window.confirm("Clear cached usage aggregates? The dashboard will reload recent data.")) return;
+    if (isClearingCache()) return;
     setIsClearingCache(true);
     setCacheStatus(undefined);
     try {
-      await mutationJSON<{ status: string }>(withMachine("/api/cache"), { method: "DELETE" });
+      const activeFrom = range() === "custom" ? appliedCustomRange().start : undefined;
+      const cachePath = activeFrom
+        ? withMachine(`/api/cache?from=${encodeURIComponent(activeFrom)}`)
+        : withMachine("/api/cache");
+      await mutationJSON<{ status: string }>(cachePath, { method: "DELETE" });
       if (configMenu) configMenu.open = false;
-      const wasShowingThisWeek = range() === "week";
       setIsCustomEditorOpen(false);
       beginRangeLoad();
-      let reload: Promise<unknown>;
-      if (wasShowingThisWeek) {
-        reload = Promise.all([refreshPeriod(), refreshCostSeries(), refreshBudget(), Promise.resolve(refreshRateLimits()).catch(() => undefined)]);
-      } else {
-        setRange("week");
-        reload = Promise.all([refreshBudget(), Promise.resolve(refreshRateLimits()).catch(() => undefined)]);
-      }
+      const reload = Promise.all([
+        refreshLoadStatus(),
+        refreshPeriod(),
+        refreshCostSeries(),
+        refreshBudget(),
+        Promise.resolve(refreshRateLimits()).catch(() => undefined),
+        refreshMachineStatuses(),
+        refreshSubdirectories(),
+      ]);
       void reload.catch((error) => setCacheStatus(error instanceof Error ? error.message : "Background reload failed."));
-      setCacheStatus("Cache cleared. Reloading this week in the background.");
+      setCacheStatus("Cache cleared. Reloading usage data in the background.");
     } catch (error) {
       setCacheStatus(error instanceof Error ? error.message : "Cache clear failed.");
     } finally {
@@ -835,6 +852,23 @@ export default function App() {
     const timer = window.setInterval(refreshLoadStatus, isPollingFast() ? 250 : 2_000);
     onCleanup(() => window.clearInterval(timer));
   });
+  // Stream progressive newest-first backend waves into the chart while initial/background loading is active.
+  let wasLoadingWaves = false;
+  createEffect(() => {
+    const loading = Boolean(loadStatus()?.isLoading);
+    if (loading) {
+      wasLoadingWaves = true;
+      const timer = window.setInterval(() => {
+        if (!costSeries.loading) void refreshCostSeries();
+        if (!period.loading) void refreshPeriod();
+        if (!budget.loading) void refreshBudget();
+      }, 750);
+      onCleanup(() => window.clearInterval(timer));
+    } else if (wasLoadingWaves) {
+      wasLoadingWaves = false;
+      void Promise.all([refreshCostSeries(), refreshPeriod(), refreshBudget(), refreshSubdirectories()]);
+    }
+  });
   let dashboardStateSave = Promise.resolve<unknown>(undefined);
   createEffect(() => {
     if (!isDashboardStateLoaded() || !isDashboardStatePersistenceEnabled()) return;
@@ -900,7 +934,7 @@ export default function App() {
               data-tooltip={modelSourceNote(model)}
             >
               <input type="checkbox" disabled={unavailableModelReason(model) != null} checked={selectedModels().includes(model)} onChange={() => toggleModel(model)} />
-              <span>{model}</span>
+              <span>{modelDisplayName(model)}</span>
             </label>
           )}</For>
         </div>
@@ -1169,7 +1203,7 @@ export default function App() {
               <div class="config-menu-panel">
                 <strong>Dashboard configuration</strong>
                 <p>Remove persisted usage aggregates and reload recent data.</p>
-                <button disabled={isClearingCache()} onClick={clearCache}>{isClearingCache() ? "Clearing…" : "Clear cache"}</button>
+                <button disabled={isClearingCache()} onClick={clearCache}>{isClearingCache() ? "Clearing…" : "Clear cache & reload"}</button>
                 <Show when={cacheStatus()}>{(message) => <small role="status">{message()}</small>}</Show>
                 <hr />
                 <MachineAdminPanel
@@ -1247,10 +1281,10 @@ export default function App() {
               </CollapsibleSection>
             </Show>
             <section id="current-view" class="stats metric-stats current-view-panel">
-            <CollapsibleSection id="metric-cost" title="Cost for current view" label="cost for current view" class="metric-card"><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></CollapsibleSection>
-            <CollapsibleSection id="metric-tokens" title="Total tokens" label="total tokens" class="metric-card"><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></CollapsibleSection>
-            <CollapsibleSection id="metric-input-output" title="Input / output" label="input / output" class="metric-card"><strong>{integer.format(total("inputTokens"))} / {integer.format(total("outputTokens"))}</strong><small>Prompt and generated</small></CollapsibleSection>
-            <CollapsibleSection id="metric-cache" title="Cache read / creation" label="cache read / creation" class="metric-card"><strong>{integer.format(total("cacheReadTokens"))} / {integer.format(total("cacheCreationTokens"))}</strong><small>Reported by ccusage</small></CollapsibleSection>
+            <CollapsibleSection id="metric-cost" title="Cost for current view" label="cost for current view" class="metric-card"><strong>{isCostViewPending() ? "…" : currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></CollapsibleSection>
+            <CollapsibleSection id="metric-tokens" title="Total tokens" label="total tokens" class="metric-card"><strong>{isCostViewPending() ? "…" : integer.format(total("totalTokens"))}</strong><small>All token categories</small></CollapsibleSection>
+            <CollapsibleSection id="metric-input-output" title="Input / output" label="input / output" class="metric-card"><strong>{isCostViewPending() ? "…" : `${integer.format(total("inputTokens"))} / ${integer.format(total("outputTokens"))}`}</strong><small>Prompt and generated</small></CollapsibleSection>
+            <CollapsibleSection id="metric-cache" title="Cache read / creation" label="cache read / creation" class="metric-card"><strong>{isCostViewPending() ? "…" : `${integer.format(total("cacheReadTokens"))} / ${integer.format(total("cacheCreationTokens"))}`}</strong><small>Reported by ccusage</small></CollapsibleSection>
             <div class="stats-actions">
               <button
                 classList={{ "refresh-icon": true, refreshing: isRefreshing() }}
@@ -1263,6 +1297,18 @@ export default function App() {
                   <path d="M20 11a8 8 0 0 0-14.9-4M4 4v6h6M4 13a8 8 0 0 0 14.9 4M20 20v-6h-6" />
                 </svg>
               </button>
+              <button
+                classList={{ "clear-cache-icon": true, clearing: isClearingCache() }}
+                disabled={isClearingCache()}
+                onClick={clearCache}
+                aria-label="Clear cache and reload"
+                aria-busy={isClearingCache()}
+                title="Clear cache and reload"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+                </svg>
+              </button>
               <ThemeToggle scheme={colorScheme()} onToggle={toggleColorScheme} />
 
             </div>
@@ -1270,7 +1316,7 @@ export default function App() {
 
             <CollapsibleSection id="usage-chart" title={chartTitle()} label="usage chart" eyebrow="AGGREGATED USAGE" class="panel usage-panel"
               summary={<><span class="data-quality-badge">{chartDataQuality()}</span>
-                <Show when={isGraphLazyLoading() || isMachineGraphRendering()}><span class="graph-loading-status" role="status" aria-label={isMachineGraphRendering() ? "Rendering selected machine data" : "Rendering earlier graph data"}><span class="graph-loading-spinner" aria-hidden="true" /></span></Show></>}>
+                <Show when={isGraphLazyLoading() || isMachineGraphRendering() || costSeries.loading || isRangeLoading()}><span class="graph-loading-status" role="status" aria-label={isMachineGraphRendering() ? "Rendering selected machine data" : "Loading usage chart data"}><span class="graph-loading-spinner" aria-hidden="true" /></span></Show></>}>
             <div class="graph-controls">
               <div class="granularity-control toggle-group" aria-label="Graph aggregation">
                 <div><button aria-pressed={granularity() === "15min" ? "true" : "false"} classList={{ active: granularity() === "15min" }} onClick={() => selectGranularity("15min")}>15 min</button><button aria-pressed={granularity() === "hourly" ? "true" : "false"} classList={{ active: granularity() === "hourly" }} onClick={() => selectGranularity("hourly")}>Hourly</button><button aria-pressed={granularity() === "6hour" ? "true" : "false"} classList={{ active: granularity() === "6hour" }} onClick={() => selectGranularity("6hour")}>6 hour</button><button aria-pressed={granularity() === "daily" ? "true" : "false"} classList={{ active: granularity() === "daily" }} onClick={() => selectGranularity("daily")}>Daily</button></div>
@@ -1286,16 +1332,23 @@ export default function App() {
                   <button aria-pressed={stackBy() === "subdirectory" ? "true" : "false"} classList={{ active: stackBy() === "subdirectory" }} onClick={() => setStackBy("subdirectory")}>Subdirectory</button>
                   <button aria-pressed={stackBy() === "modelEffort" ? "true" : "false"} classList={{ active: stackBy() === "modelEffort" }} onClick={() => setStackBy("modelEffort")}>Model + effort</button>
                 </div>
-                <strong>{formattedChartTotal()}</strong>
+                <strong>{isCostViewPending() ? "…" : formattedChartTotal()}</strong>
               </div>
             </div>
+            <Show when={!isCostViewPending() && !isChartEmptyAndLoading()} fallback={<div class="chart chart-loading-placeholder" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true" /><span>Loading usage chart…</span></div>}>
+            <Show when={isChartLoading()}>
+              <div class="chart-inline-loading" role="status" aria-live="polite">
+                <span class="refresh-spinner" aria-hidden="true" />
+                <span>Loading remaining usage data for selected range…</span>
+              </div>
+            </Show>
             <UsageChart
               rows={filteredCostRows()}
               granularity={granularity()}
               label={rangeLabel()}
               metric={chartMetric()}
-              timelineStart={costSeries()?.timelineStart}
-              timelineEndExclusive={costSeries()?.timelineEndExclusive}
+              timelineStart={costSeries()?.granularity === granularity() ? costSeries()?.timelineStart : undefined}
+              timelineEndExclusive={costSeries()?.granularity === granularity() ? costSeries()?.timelineEndExclusive : undefined}
               onLazyLoadingChange={setIsGraphLazyLoading}
               stackBy={stackBy()}
               colorForSeries={colorForSeries}
@@ -1306,6 +1359,7 @@ export default function App() {
               gaps={visibleDataGaps()}
               evaluatedAt={costSeries()?.scope.evaluatedAt}
             />
+            </Show>
             <Show when={latestEventMarkers().length > 0 || visibleDataGaps().length > 0}>
               <div class="machine-event-markers" aria-label="Per-machine latest-event markers and last-hour gaps">
                 <For each={latestEventMarkers()}>{(marker) => (
@@ -1323,6 +1377,7 @@ export default function App() {
 
             <CollapsibleSection id="breakdown" title={`${chartMetricLabel()} by host and model`} label="host and model breakdown" eyebrow="PERIOD BREAKDOWN" class="panel breakdown-panel"
               summary={<span class="data-quality-badge">{rangeLabel()}</span>}>
+            <Show when={!isCostViewPending() && !isChartEmptyAndLoading()} fallback={<div class="chart-loading-placeholder compact" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true" /><span>Loading breakdown…</span></div>}>
             <div class="breakdown-grid">
               <div class="breakdown-col">
                 <h3 class="breakdown-title">By host</h3>
@@ -1330,23 +1385,26 @@ export default function App() {
               </div>
               <div class="breakdown-col">
                 <h3 class="breakdown-title">By model</h3>
-                <BreakdownBars rows={filteredCostRows()} metric={chartMetric()} keyOf={(row) => row.model} colorFor={colorForModel} label="per model" />
+                <BreakdownBars rows={filteredCostRows()} metric={chartMetric()} keyOf={(row) => row.model} labelOf={modelDisplayName} colorFor={colorForModel} label="per model" />
               </div>
             </div>
+            </Show>
             </CollapsibleSection>
 
             <CollapsibleSection id="daily-detail" title="Daily agent and model detail" label="daily detail" eyebrow="CCUSAGE BREAKDOWNS" class="panel block-panel">
             <div class="metric-table" role="table">
               <div classList={{ "metric-row": true, "metric-head": true, "with-machine": selectedMachines().length !== 1 }} role="row"><span>Date</span><Show when={selectedMachines().length !== 1}><span>Machine</span></Show><span>Agent</span><span>Model</span><span>Cost</span><span>Total tokens</span></div>
-              <For each={filteredRows().slice().reverse()} fallback={<p class="empty compact">No matching metric rows.</p>}>{(row) => (
-                <div classList={{ "metric-row": true, "with-machine": selectedMachines().length !== 1 }} role="row"><time>{row.date}</time><Show when={selectedMachines().length !== 1}><span class="machine-tag">{row.machine}</span></Show><span class="agent-tag">{row.agent}</span><strong title={row.model}>{row.model}</strong><span>{currency.format(row.costUSD)}</span><span>{integer.format(row.totalTokens)}</span></div>
+              <For each={filteredRows().slice().reverse()} fallback={<p class="empty compact">{(period() == null || filteredRows().length === 0) && (period.loading || Boolean(loadStatus()?.isLoading) || isRangeLoading()) ? "Loading daily detail…" : "No matching metric rows."}</p>}>{(row) => (
+                <div classList={{ "metric-row": true, "with-machine": selectedMachines().length !== 1 }} role="row"><time>{row.date}</time><Show when={selectedMachines().length !== 1}><span class="machine-tag">{row.machine}</span></Show><span class="agent-tag">{row.agent}</span><strong title={modelDisplayName(row.model)}>{modelDisplayName(row.model)}</strong><span>{currency.format(row.costUSD)}</span><span>{integer.format(row.totalTokens)}</span></div>
               )}</For>
             </div>
             </CollapsibleSection>
 
             <CollapsibleSection id="menu-budget" title="Menu budget" label="menu budget" class="panel menu-budget-panel">
             <div class="budget-note">
-              Menu budget: {currency.format(budget()?.spentUSD ?? 0)} in selected period · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
+              <Show when={budget() != null || !budget.loading} fallback={"Menu budget: Loading…"}>
+                Menu budget: {currency.format(budget()?.spentUSD ?? 0)} in selected period · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
+              </Show>
             </div>
             </CollapsibleSection>
           </Show>

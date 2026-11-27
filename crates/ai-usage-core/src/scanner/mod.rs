@@ -174,8 +174,41 @@ impl LocalUsageScanner {
             context = ScanContext::Codex(final_context);
             end = offset;
         } else {
+            // On cold-start rescan of large Claude/Antigravity files, jump straight to a safe
+            // byte offset near `since` via zero-JSON-parse binary search instead of reading from 0.
+            let scan_start = if step == ScanStep::Rescan && start == 0 && !since.is_empty() {
+                let ts_key = match &context {
+                    ScanContext::Claude => Some("\"timestamp\""),
+                    ScanContext::Antigravity { .. } => Some("\"created_at\""),
+                    ScanContext::Codex(_) => None,
+                };
+                if let (Some(key), Ok(since_date)) =
+                    (ts_key, chrono::NaiveDate::parse_from_str(since, "%Y-%m-%d"))
+                {
+                    let cutoff_utc =
+                        crate::aggregation::blocks::local_midnight_utc(since_date, timezone)
+                            - chrono::Duration::hours(1);
+                    let cutoff_19 = cutoff_utc.format("%Y-%m-%dT%H:%M:%S").to_string();
+                    match log_reader::find_start_offset_for_utc_cutoff(
+                        &path,
+                        metadata.len(),
+                        key,
+                        &cutoff_19,
+                    ) {
+                        Ok((offset, probed)) => {
+                            self.stats.bytes_read += probed;
+                            offset
+                        }
+                        Err(_) => start,
+                    }
+                } else {
+                    start
+                }
+            } else {
+                start
+            };
             let (offset, bytes) =
-                log_reader::visit_forward(&path, start, metadata.len(), |line| {
+                log_reader::visit_forward(&path, scan_start, metadata.len(), |line| {
                     let parsed = match &mut context {
                         ScanContext::Claude => claude::parse_line(line),
                         ScanContext::Antigravity {

@@ -8,7 +8,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::Tz;
 
 use ai_usage_core::aggregation::collector::{
-    FetchFuture, MachineCollector, MachineSnapshotFetcher, MachineSnapshotStore,
+    FetchFuture, MachineCollector, MachineSnapshotFetcher, MachineSnapshotStore, ResetCacheFuture,
 };
 use ai_usage_core::aggregation::snapshot_service::SnapshotService;
 use ai_usage_core::cache::DashboardDirectoryNameStore;
@@ -235,6 +235,22 @@ impl MachineSnapshotFetcher for LiveLocalFetcher {
                 detail: None,
                 remediation: None,
             })
+        })
+    }
+
+    fn reset_cache<'a>(&'a self, machine_id: &'a str) -> ResetCacheFuture<'a> {
+        let is_local = machine_id == "local";
+        let service = self.service.clone();
+        Box::pin(async move {
+            if !is_local {
+                return;
+            }
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Ok(mut svc) = service.lock() {
+                    svc.reset_cache_state();
+                }
+            })
+            .await;
         })
     }
 }

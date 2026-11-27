@@ -427,6 +427,79 @@ impl UsageAggregationCache {
 
     /// Commit all changes for one local calendar day. Bounds are Unix seconds in the caller's calendar.
     #[allow(clippy::too_many_arguments)]
+    /// Return the 15-minute-aligned Unix watermark (seconds) up to which `day`'s
+    /// 15-minute `session_metrics` have already been persisted in SQLite.
+    pub fn live_day_watermark(&self, day: &str) -> Option<i64> {
+        let mut stmt = self
+            .connection
+            .prepare("SELECT watermark_unix FROM live_day_watermarks WHERE day=?1")
+            .ok()?;
+        stmt.query_row([day], |r| r.get::<_, i64>(0)).ok()
+    }
+
+    /// Persist the current in-progress day's 15-minute `session_metrics` and `daily_metrics`
+    /// without marking `day` complete in `coverage_ranges`, and record `watermark_unix`
+    /// (aligned to a 15-minute boundary) so subsequent cold starts only scan files modified
+    /// at or after `watermark_unix`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_live_day(
+        &mut self,
+        day: &str,
+        start: f64,
+        end: f64,
+        replace_from: f64,
+        watermark_unix: i64,
+        daily: &[MetricRecord],
+        sessions: &[SessionMetricRecord],
+        fingerprint: &str,
+        generation: u64,
+    ) -> Result<()> {
+        if self.expected_fingerprint.as_deref() != Some(fingerprint)
+            || self.generation != generation
+        {
+            return Err(AggregationCacheError::StaleGeneration);
+        }
+        if start >= end {
+            return Err(AggregationCacheError::InvalidData(
+                "invalid live day bounds".into(),
+            ));
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS live_day_watermarks(day TEXT PRIMARY KEY, watermark_unix INTEGER NOT NULL);",
+        )?;
+        tx.execute("DELETE FROM daily_metrics WHERE date=?1", [day])?;
+        if replace_from <= start {
+            tx.execute(
+                "DELETE FROM session_metrics WHERE source_day=?1 OR (source_day IS NULL AND timestamp>=?2 AND timestamp<?3)",
+                params![day, start, end],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM session_metrics WHERE (source_day=?1 OR source_day IS NULL) AND timestamp>=?2 AND timestamp<?3",
+                params![day, replace_from, end],
+            )?;
+        }
+        for row in daily {
+            if row.date == day {
+                insert_daily(&tx, row)?;
+            }
+        }
+        for row in group_sessions(sessions)? {
+            insert_session(&tx, &row, Some(day))?;
+        }
+        tx.execute(
+            "INSERT INTO live_day_watermarks(day, watermark_unix) VALUES (?1, ?2)
+             ON CONFLICT(day) DO UPDATE SET watermark_unix=excluded.watermark_unix",
+            params![day, watermark_unix],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn merge_day(
         &mut self,
         day: &str,

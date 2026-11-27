@@ -626,3 +626,37 @@ fn review_prune_updates_coverage() {
         ScanStep::Reuse
     );
 }
+
+#[test]
+fn claude_binary_search_skips_old_prefix_without_reading_full_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large-claude.jsonl");
+    let mut content = String::new();
+    // Write ~600 KB of old entries from 2026-01-01..2026-01-09.
+    for i in 0..2500 {
+        let day = 1 + (i / 300);
+        content.push_str(&claude(&format!("2026-01-{day:02}T10:00:00Z"), &format!("old-{i}")));
+        content.push('\n');
+    }
+    // Append 2 target entries on 2026-01-20.
+    content.push_str(&claude("2026-01-20T01:00:00Z", "new-1"));
+    content.push('\n');
+    content.push_str(&claude("2026-01-20T02:00:00Z", "new-2"));
+    content.push('\n');
+    fs::write(&path, &content).unwrap();
+    let file_size = fs::metadata(&path).unwrap().len();
+    assert!(file_size > 400_000);
+
+    let mut scanner = LocalUsageScanner::new();
+    let (events, transition) = scanner
+        .scan_file(&path, "2026-01-20", UTC, ScanContext::Claude)
+        .unwrap();
+    assert_eq!(transition, ScanFileTransition::Rescan);
+    assert_eq!(events.len(), 2);
+    assert!(
+        scanner.stats.bytes_read < file_size,
+        "expected binary search to skip old prefix: read {} of {} bytes",
+        scanner.stats.bytes_read,
+        file_size
+    );
+}

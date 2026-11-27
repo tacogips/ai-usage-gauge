@@ -1,6 +1,7 @@
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
+use ai_usage_core::state::{PieChartSelection, RatioTextSelection};
 use ai_usage_core::types::{
     AppState, CostSnapshot, MenuBarStatusEntry, PieChartId, RateLimitProvider, RateLimitsResponse,
 };
@@ -68,10 +69,15 @@ impl TrayViewModel {
         let is_budget_unset = state.budget_usd.is_none();
         let is_budget_unknown = snapshot.is_none() && !is_budget_unset;
 
+        let pies = PieChartSelection::normalized(&state.menu_bar_pie_charts);
+        let ratios = RatioTextSelection::normalized(&state.menu_bar_ratio_labels);
         let mut entries = Vec::new();
         for id in PieChartId::menu_bar_cases() {
-            let show_icon = !state.menu_bar_cost_only && state.menu_bar_pie_charts.contains(&id);
-            let show_ratio = state.menu_bar_ratio_labels.contains(&id);
+            // `menu_bar_cost_only` suppresses only the budget percentage text,
+            // never the selected vendor/budget usage gauge icons.
+            let show_ratio =
+                ratios.contains(&id) && (id != PieChartId::Budget || !state.menu_bar_cost_only);
+            let show_icon = pies.contains(&id) || (show_ratio && id != PieChartId::Budget);
             if !show_icon && !show_ratio {
                 continue;
             }

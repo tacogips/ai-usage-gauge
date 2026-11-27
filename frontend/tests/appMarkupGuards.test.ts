@@ -49,4 +49,9 @@ describe("dashboard app markup contract", () => {
     for (const label of ["Collapse filters", "Expand filters", "Collapse header", "Expand header"])
       expect(layout).toContain(label);
   });
+
+  test("exposes a visible clear cache and reload action button", () => {
+    expect(app).toContain('aria-label="Clear cache and reload"');
+    expect(app).toContain('classList={{ "clear-cache-icon": true, clearing: isClearingCache() }}');
+  });
 });

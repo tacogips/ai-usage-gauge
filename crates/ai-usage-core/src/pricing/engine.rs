@@ -31,7 +31,8 @@ impl PricingEngine {
             None
         }
         .or_else(|| resolve(&self.rates, &event.model))
-        .or_else(|| resolve(&fallback_table::rates(), &event.model));
+        .or_else(|| resolve(&fallback_table::rates(), &event.model))
+        .or_else(|| fallback_table::family_fallback(&event.model));
         let cost_usd = rate.map_or(Decimal::ZERO, |r| {
             let five = event.cache_creation_5m_tokens.saturating_add(
                 event.cache_creation_tokens.saturating_sub(

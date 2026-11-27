@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -10,7 +10,7 @@ use crate::aggregation::rolling::{selected_period_cost_ref, RollingInputsRef};
 use crate::state::ResetWindowCalculator;
 use crate::types::{
     AppState, BudgetSummary, CostRecord, CostSnapshot, MetricRecord, ResetCycle,
-    SessionMetricRecord,
+    SessionMetricRecord, UsageDataQuality,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,13 +45,14 @@ pub struct CostSeriesPoint {
     pub directory: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
-    #[serde(rename = "costUSD")]
+    #[serde(rename = "costUSD", with = "rust_decimal::serde::float")]
     pub cost_usd: Decimal,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_creation_tokens: u64,
     pub cache_read_tokens: u64,
     pub total_tokens: u64,
+    pub data_quality: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -292,12 +293,24 @@ impl DashboardQueryService {
                     .with_timezone(&tz)
                     .format("%Y-%m-%d")
                     .to_string();
-                let ts = if let Some(sec) = bucket_seconds {
-                    let floored = s.timestamp.timestamp().div_euclid(sec) * sec;
-                    DateTime::from_timestamp(floored, 0).unwrap_or(s.timestamp)
-                } else {
-                    let d = s.timestamp.with_timezone(&tz).date_naive();
-                    local_midnight_utc(d, tz)
+                let local = s.timestamp.with_timezone(&tz);
+                let ts = match granularity {
+                    "15min" => {
+                        let floored_min = (local.minute() / 15) * 15;
+                        local_midnight_utc(local.date_naive(), tz)
+                            + Duration::hours(i64::from(local.hour()))
+                            + Duration::minutes(i64::from(floored_min))
+                    }
+                    "hourly" => {
+                        local_midnight_utc(local.date_naive(), tz)
+                            + Duration::hours(i64::from(local.hour()))
+                    }
+                    "6hour" => {
+                        let floored_hour = (local.hour() / 6) * 6;
+                        local_midnight_utc(local.date_naive(), tz)
+                            + Duration::hours(i64::from(floored_hour))
+                    }
+                    _ => local_midnight_utc(local.date_naive(), tz),
                 };
                 let dir = if directory_breakdown {
                     s.directory.clone()
@@ -318,6 +331,10 @@ impl DashboardQueryService {
                     dir.clone(),
                     eff.clone(),
                 );
+                let quality = match s.data_quality {
+                    UsageDataQuality::Timestamped => "timestamped",
+                    UsageDataQuality::SessionEstimated => "sessionEstimated",
+                };
                 let entry = grouped.entry(key).or_insert_with(|| CostSeriesPoint {
                     timestamp: ts,
                     date,
@@ -332,7 +349,11 @@ impl DashboardQueryService {
                     cache_creation_tokens: 0,
                     cache_read_tokens: 0,
                     total_tokens: 0,
+                    data_quality: quality.to_owned(),
                 });
+                if quality == "sessionEstimated" {
+                    entry.data_quality = "sessionEstimated".to_owned();
+                }
                 entry.cost_usd += s.cost_usd;
                 entry.input_tokens = entry.input_tokens.saturating_add(s.input_tokens);
                 entry.output_tokens = entry.output_tokens.saturating_add(s.output_tokens);
@@ -380,6 +401,7 @@ impl DashboardQueryService {
                     cache_creation_tokens: 0,
                     cache_read_tokens: 0,
                     total_tokens: 0,
+                    data_quality: "daily".to_owned(),
                 });
                 entry.cost_usd += m.cost_usd;
                 entry.input_tokens = entry.input_tokens.saturating_add(m.input_tokens);

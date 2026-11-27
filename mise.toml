@@ -23,6 +23,24 @@ rust = "1.98.1"
 github-cli = "latest"
 pre-commit = "latest"
 
+[tools."github:leanprover/lean4"]
+version = "4.36.0"
+strip_components = 1
+bin_path = "bin"
+filter_bins = ["lean", "lake"]
+
+[tools."github:leanprover/lean4".platforms]
+macos-x64 = { asset_pattern = "lean-*-darwin.tar.zst" }
+macos-arm64 = { asset_pattern = "lean-*-darwin_aarch64.tar.zst" }
+linux-x64 = { asset_pattern = "lean-*-linux.tar.zst" }
+linux-arm64 = { asset_pattern = "lean-*-linux_aarch64.tar.zst" }
+windows-x64 = { asset_pattern = "lean-*-windows.tar.zst" }
+
+[tasks."verify:lean"]
+description = "Check a Lean 4 proof (defaults to verification/AppInvariants.lean)"
+usage = 'arg "[file]" help="Lean proof file" default="verification/AppInvariants.lean"'
+run = 'lean -DwarningAsError=true -- "$usage_file"'
+
 [tasks."default"]
 description = "Show available tasks"
 run = '''

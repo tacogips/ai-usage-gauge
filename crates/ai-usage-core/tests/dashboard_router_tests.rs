@@ -262,23 +262,46 @@ async fn all_read_routes_and_validation_work() {
             .status,
         200
     );
-    assert_eq!(
-        router.route(get("/api/machine-status", "")).await.status,
-        200
-    );
-    assert_eq!(router.route(get("/api/load-status", "")).await.status, 200);
-    assert_eq!(
-        router.route(get("/api/dashboard-state", "")).await.status,
-        200
-    );
+    let ms_resp = router.route(get("/api/machine-status", "")).await;
+    assert_eq!(ms_resp.status, 200);
+    let ms_val: Value = serde_json::from_slice(&ms_resp.body).unwrap();
+    assert!(ms_val["requested"].is_string());
+    assert!(ms_val["generatedAt"].is_string());
+    assert!(ms_val["machines"].is_array());
+
+    let ls_resp = router.route(get("/api/load-status", "range=today")).await;
+    assert_eq!(ls_resp.status, 200);
+    let ls_val: Value = serde_json::from_slice(&ls_resp.body).unwrap();
+    assert_eq!(ls_val["phase"], json!("ready"));
+    assert_eq!(ls_val["isLoading"], json!(false));
+    assert!(ls_val["machines"].is_array());
+
+    let ds_resp = router.route(get("/api/dashboard-state", "")).await;
+    assert_eq!(ds_resp.status, 200);
+    let ds_val: Value = serde_json::from_slice(&ds_resp.body).unwrap();
+    assert!(ds_val.as_object().unwrap().contains_key("state"));
+
+    // GET /api/machines must always include the built-in "local" machine even when machines.json is absent.
+    let machines_resp = router.route(get("/api/machines", "")).await;
+    assert_eq!(machines_resp.status, 200);
+    let machines_val: Value = serde_json::from_slice(&machines_resp.body).unwrap();
+    let machine_ids: Vec<&str> = machines_val["machines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["id"].as_str())
+        .collect();
+    assert!(machine_ids.contains(&"local"));
 
     // Budget with CustomHours(1): only the 30-min-ago event ($2) is inside [now-1h, now).
     let budget = router.route(get("/api/budget", "")).await;
     assert_eq!(budget.status, 200);
     let bval: Value = serde_json::from_slice(&budget.body).unwrap();
     assert_eq!(bval["budget"]["spentUSD"], json!(2));
+    assert_eq!(bval["spentUSD"], json!(2.0));
+    assert_eq!(bval["budgetUSD"], json!(100.0));
 
-    // Cost-series strict boolean & machine selection errors.
+    // Cost-series strict boolean, frontend schema contract, & machine selection errors.
     let ok_cs = router
         .route(get(
             "/api/cost-series",
@@ -286,6 +309,36 @@ async fn all_read_routes_and_validation_work() {
         ))
         .await;
     assert_eq!(ok_cs.status, 200);
+    let cs_val: Value = serde_json::from_slice(&ok_cs.body).unwrap();
+    assert_eq!(cs_val["range"], json!("today"));
+    assert_eq!(cs_val["granularity"], json!("15min"));
+    assert!(cs_val["timelineStart"].is_string());
+    assert!(cs_val["timelineEndExclusive"].is_string());
+    let cs_end = DateTime::parse_from_rfc3339(cs_val["timelineEndExclusive"].as_str().unwrap())
+        .unwrap()
+        .with_timezone(&Utc);
+    assert!(
+        cs_end <= Utc::now() + Duration::seconds(5),
+        "sub-daily today timelineEndExclusive should not extend into future hours: {cs_end}"
+    );
+    assert!(cs_val["rows"].is_array());
+    assert!(cs_val["totalUSD"].is_number());
+    if let Some(first) = cs_val["rows"].as_array().and_then(|a| a.first()) {
+        assert!(first["costUSD"].is_number());
+        assert!(first["dataQuality"].is_string());
+    }
+
+    let ok_metrics = router.route(get("/api/metrics", "range=today")).await;
+    assert_eq!(ok_metrics.status, 200);
+    let m_val: Value = serde_json::from_slice(&ok_metrics.body).unwrap();
+    assert_eq!(m_val["range"], json!("today"));
+    assert!(m_val["rows"].is_array());
+    assert!(m_val["totals"]["costUSD"].is_number());
+
+    let ok_subdirs = router.route(get("/api/subdirectories", "machine=all")).await;
+    assert_eq!(ok_subdirs.status, 200);
+    let sd_val: Value = serde_json::from_slice(&ok_subdirs.body).unwrap();
+    assert!(sd_val["machines"].is_array());
     assert_eq!(
         router
             .route(get(
@@ -471,4 +524,172 @@ fn resolve_desktop_executable_honors_override_without_fallback() {
 
     env.insert("CCUSAGE_GAUGE_DESKTOP_EXECUTABLE".into(), String::new());
     assert!(resolve_desktop_executable(&env, &cli_exe).is_err());
+}
+
+#[test]
+fn pricing_engine_prices_modern_claude_and_codex_families_and_keeps_synthetic_zero() {
+    use ai_usage_core::pricing::PricingEngine;
+    let engine = PricingEngine::default();
+    let now = Utc::now();
+    for (agent, model) in [
+        ("claude", "claude-opus-5-5"),
+        ("claude", "claude-fable-5-2"),
+        ("claude", "claude-haiku-5-5"),
+        ("codex", "gpt-6.2-sol"),
+        ("codex", "gpt-6.1-terra"),
+    ] {
+        let ev = TimestampedUsageEvent {
+            identity: format!("{agent}-{model}"),
+            timestamp: now,
+            agent: agent.into(),
+            session_id: "s".into(),
+            request_id: "r".into(),
+            message_id: "m".into(),
+            model: model.into(),
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
+            directory: None,
+            effort: None,
+        };
+        let priced = engine.price_event(&ev);
+        assert!(
+            priced.cost_usd > Decimal::ZERO,
+            "expected positive cost for {agent}/{model}, got {}",
+            priced.cost_usd
+        );
+    }
+
+    let synthetic = TimestampedUsageEvent {
+        identity: "syn".into(),
+        timestamp: now,
+        agent: "claude".into(),
+        session_id: "s".into(),
+        request_id: "r".into(),
+        message_id: "m".into(),
+        model: "<synthetic>".into(),
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_creation_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_5m_tokens: 0,
+        cache_creation_1h_tokens: 0,
+        directory: None,
+        effort: None,
+    };
+    assert_eq!(engine.price_event(&synthetic).cost_usd, Decimal::ZERO);
+}
+
+#[test]
+fn cost_series_6hour_aligns_to_local_timezone_not_utc() {
+    use ai_usage_core::dashboard::query::{DashboardQueryService, DirectoryFilter};
+    use chrono::Timelike;
+    // 2026-11-27 19:30 Asia/Tokyo == 2026-11-27 10:30 UTC.
+    // Local 6-hour bucket MUST be 18:00 JST (09:00 UTC), NOT 06:00 UTC (15:00 JST).
+    let tz = chrono_tz::Asia::Tokyo;
+    let ts = DateTime::parse_from_rfc3339("2026-11-27T10:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let start = DateTime::parse_from_rfc3339("2026-11-26T15:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let end = DateTime::parse_from_rfc3339("2026-11-27T15:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let snap = CostSnapshot {
+        generated_at: ts,
+        active_boundary_at: start,
+        cost_since_reset_usd: Decimal::from(5),
+        budget: BudgetSummary::new(Decimal::from(5), Some(Decimal::from(100))),
+        reset_cycle: ResetCycle::Daily,
+        refresh_interval_seconds: 30,
+        points: vec![],
+        dashboard_metrics: vec![],
+        dashboard_sessions: vec![SessionMetricRecord {
+            timestamp: ts,
+            agent: "claude".into(),
+            model: "claude-opus-5-5".into(),
+            cost_usd: Decimal::from(5),
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            total_tokens: 150,
+            data_quality: UsageDataQuality::Timestamped,
+            machine: "local".into(),
+            directory: None,
+            effort: None,
+        }],
+        rolling_events: vec![],
+    };
+    let resp = DashboardQueryService::cost_series(
+        &snap,
+        start,
+        end,
+        "6hour",
+        false,
+        false,
+        &DirectoryFilter::default(),
+        tz,
+    );
+    assert_eq!(resp.points.len(), 1);
+    let local_bucket = resp.points[0].timestamp.with_timezone(&tz);
+    assert_eq!(local_bucket.hour(), 18);
+    assert_eq!(local_bucket.minute(), 0);
+}
+
+#[tokio::test]
+async fn delete_cache_removes_sqlite_and_sidecars_and_reloads() {
+    let temp = TempDir::new().unwrap();
+    let router = build_test_router(&temp, ResetCycle::Daily).await;
+
+    let cache_path = router
+        .paths
+        .aggregation_cache_file_for_machine("local")
+        .unwrap();
+    fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+    fs::write(&cache_path, b"sqlite-placeholder").unwrap();
+    let mut wal = cache_path.as_os_str().to_os_string();
+    wal.push("-wal");
+    let wal_path = std::path::PathBuf::from(wal);
+    fs::write(&wal_path, b"wal-placeholder").unwrap();
+    let mut shm = cache_path.as_os_str().to_os_string();
+    shm.push("-shm");
+    let shm_path = std::path::PathBuf::from(shm);
+    fs::write(&shm_path, b"shm-placeholder").unwrap();
+
+    let resp = router
+        .route(RouterRequest {
+            method: "DELETE".into(),
+            path: "/api/cache".into(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: vec![],
+            is_trusted_ipc: true,
+            expected_port: None,
+        })
+        .await;
+    assert_eq!(resp.status, 200);
+    assert!(!cache_path.exists());
+    assert!(!wal_path.exists());
+    assert!(!shm_path.exists());
+
+    // Wait briefly for the background reload spawned by handle_clear_cache to complete.
+    for _ in 0..50 {
+        let statuses = router.collector.store.statuses().await;
+        if statuses
+            .iter()
+            .any(|s| s.id == "local" && s.snapshot_available && !s.collection_in_progress)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let statuses = router.collector.store.statuses().await;
+    let local = statuses.iter().find(|s| s.id == "local").unwrap();
+    assert!(local.snapshot_available);
+    assert!(!local.collection_in_progress);
 }

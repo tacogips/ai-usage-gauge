@@ -3,6 +3,10 @@ import { effortLabel, effortRank } from "./effort";
 
 export type StackBy = "model" | "machine" | "subdirectory" | "modelEffort";
 
+export function modelDisplayName(model: string): string {
+  return model === "<synthetic>" ? "Claude Code (system)" : model;
+}
+
 export function chartSeriesIdentity(row: CostRow, stackBy: StackBy): string {
   if (stackBy === "machine") return row.machine;
   if (stackBy === "model") return row.model;
@@ -36,8 +40,9 @@ export function chartSeriesLabel(
 ): string {
   if (stackBy === "modelEffort") {
     const { model, effort } = modelEffortParts(chartSeriesIdentity(row, stackBy));
-    return `${model} (${effortLabel(effort)})`;
+    return `${modelDisplayName(model)} (${effortLabel(effort)})`;
   }
+  if (stackBy === "model") return modelDisplayName(row.model);
   return stackBy === "subdirectory" ? subdirectoryLabel(row) : chartSeriesIdentity(row, stackBy);
 }
 

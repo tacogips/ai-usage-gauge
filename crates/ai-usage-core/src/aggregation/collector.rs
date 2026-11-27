@@ -6,7 +6,7 @@ use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
-use tokio::sync::{Mutex, Notify, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 
 use crate::aggregation::merge::{CostSnapshotMerge, MachineSnapshotInput, MergedDashboardSnapshot};
 use crate::types::{
@@ -18,6 +18,8 @@ use crate::types::{
 pub type FetchFuture<'a> =
     Pin<Box<dyn Future<Output = Result<CostSnapshot, SanitizedCollectionError>> + Send + 'a>>;
 
+pub type ResetCacheFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
 pub trait MachineSnapshotFetcher: Send + Sync {
     fn fetch<'a>(
         &'a self,
@@ -25,6 +27,10 @@ pub trait MachineSnapshotFetcher: Send + Sync {
         desired_from: Option<NaiveDate>,
         now: DateTime<Utc>,
     ) -> FetchFuture<'a>;
+
+    fn reset_cache<'a>(&'a self, _machine_id: &'a str) -> ResetCacheFuture<'a> {
+        Box::pin(async {})
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +149,21 @@ impl MachineSnapshotStore {
         entry.status.collection_in_progress = true;
         entry.status.last_attempt_at = Some(now);
         Some((entry.descriptor.clone(), entry.generation))
+    }
+
+    /// Publish an intermediate progressive snapshot while `collection_in_progress` remains true.
+    pub async fn publish_progress(&self, machine_id: &str, snapshot: CostSnapshot, now: DateTime<Utc>) {
+        let mut guard = self.inner.write().await;
+        let Some(entry) = guard.machines.get_mut(machine_id) else {
+            return;
+        };
+        entry.status.collection_state = MachineCollectionState::Healthy;
+        entry.status.snapshot_available = true;
+        entry.status.stale = false;
+        entry.status.snapshot_generated_at = Some(snapshot.generated_at);
+        entry.status.last_success_at = Some(now);
+        entry.status.coverage_start = snapshot.dashboard_metrics.first().map(|m| m.date.clone());
+        entry.snapshot = Some(snapshot);
     }
 
     /// Commit a successful snapshot only if `generation` still matches (stale-generation fencing).
@@ -264,12 +285,37 @@ impl MachineSnapshotStore {
     pub async fn range_progress(&self) -> Option<DashboardRangeLoadProgress> {
         self.inner.read().await.range_progress.clone()
     }
+
+    /// Clear in-memory snapshot state for `machine_id`, bump its generation to fence off any
+    /// stale in-flight commits, and mark `collection_in_progress = true` for the impending reload.
+    pub async fn clear_snapshot(&self, machine_id: &str) {
+        let mut guard = self.inner.write().await;
+        if let Some(entry) = guard.machines.get_mut(machine_id) {
+            entry.generation = entry.generation.wrapping_add(1);
+            entry.snapshot = None;
+            entry.status.snapshot_available = false;
+            entry.status.coverage_start = None;
+            entry.status.snapshot_generated_at = None;
+            entry.status.stale = false;
+            entry.status.stale_since = None;
+            entry.status.last_error = None;
+            entry.status.collection_state = if entry.descriptor.enabled {
+                MachineCollectionState::NeverCollected
+            } else {
+                MachineCollectionState::Disabled
+            };
+            entry.status.collection_in_progress = entry.descriptor.enabled;
+        }
+        guard.range_progress = None;
+    }
 }
+
+type InFlightMap = Arc<Mutex<HashMap<String, watch::Receiver<Option<bool>>>>>;
 
 pub struct MachineCollector {
     pub store: MachineSnapshotStore,
     fetcher: Arc<dyn MachineSnapshotFetcher>,
-    in_flight: Arc<Mutex<HashMap<String, Arc<Notify>>>>,
+    in_flight: InFlightMap,
     refresh_interval_seconds: u32,
 }
 
@@ -396,6 +442,13 @@ impl MachineCollector {
         let inputs = self.store.inputs().await;
         CostSnapshotMerge::merge(&inputs, state, requested, disposition, now, tz)
     }
+
+    /// Close any open cache handles / in-memory scanner state in the fetcher and clear the
+    /// machine's in-memory snapshot before deleting the on-disk SQLite cache.
+    pub async fn reset_machine_cache(&self, machine_id: &str) {
+        self.fetcher.reset_cache(machine_id).await;
+        self.store.clear_snapshot(machine_id).await;
+    }
 }
 
 impl MachineRuntimeReconciler for MachineCollector {
@@ -449,26 +502,27 @@ impl PollingService {
 async fn refresh_machine_inner(
     store: MachineSnapshotStore,
     fetcher: Arc<dyn MachineSnapshotFetcher>,
-    in_flight: Arc<Mutex<HashMap<String, Arc<Notify>>>>,
+    in_flight: InFlightMap,
     machine_id: String,
     desired_from: Option<NaiveDate>,
     now: DateTime<Utc>,
 ) -> bool {
-    let (notify, is_leader) = {
+    let leader_tx = {
         let mut map = in_flight.lock().await;
-        if let Some(existing) = map.get(&machine_id) {
-            (existing.clone(), false)
-        } else {
-            let n = Arc::new(Notify::new());
-            map.insert(machine_id.clone(), n.clone());
-            (n, true)
+        if let Some(existing_rx) = map.get(&machine_id) {
+            let mut rx = existing_rx.clone();
+            drop(map);
+            return rx
+                .wait_for(|v| v.is_some())
+                .await
+                .ok()
+                .and_then(|v| *v)
+                .unwrap_or(false);
         }
+        let (tx, rx) = watch::channel(None);
+        map.insert(machine_id.clone(), rx);
+        tx
     };
-
-    if !is_leader {
-        notify.notified().await;
-        return true;
-    }
 
     let result = if let Some((descriptor, gen)) = store.begin_attempt(&machine_id, now).await {
         match fetcher.fetch(&descriptor, desired_from, now).await {
@@ -486,6 +540,6 @@ async fn refresh_machine_inner(
         let mut map = in_flight.lock().await;
         map.remove(&machine_id);
     }
-    notify.notify_waiters();
+    let _ = leader_tx.send(Some(result));
     result
 }

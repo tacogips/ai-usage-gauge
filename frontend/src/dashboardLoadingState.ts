@@ -23,8 +23,12 @@ export function shouldBlockDashboard(input: {
   isRangeLoading: boolean;
   isFetching: boolean;
   hasFailedRequest: boolean;
+  hasAnyData?: boolean;
   loadStatus?: LoadStatusResponse;
 }): boolean {
+  // Progressive rendering: as soon as any dashboard section has data, render
+  // immediately and let individual sections show their own loading indicators.
+  if (input.hasAnyData) return false;
   if (input.isRangeLoading) return true;
   if (!input.isInitialLoading) return false;
   if (input.loadStatus == null || !["ready", "failed"].includes(input.loadStatus.phase)) {

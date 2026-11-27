@@ -254,6 +254,25 @@ fn tray_view_model_formats_titles_tooltips_and_sole_icon_invariant() {
 
     let vm_err_none = TrayViewModel::build(&state, None, None, Some("err"), false, 20, false);
     assert_eq!(vm_err_none.status_title, "$!");
+
+    // `menu_bar_cost_only: true` hides only the budget percentage text; vendor usage icons remain visible.
+    let mut cost_only_state = sample_state();
+    cost_only_state.menu_bar_cost_only = true;
+    cost_only_state.menu_bar_pie_charts = vec![
+        PieChartId::ClaudeWeekly,
+        PieChartId::CodexWeekly,
+        PieChartId::GeminiWeekly,
+    ];
+    cost_only_state.menu_bar_ratio_labels = vec![PieChartId::Budget, PieChartId::ClaudeWeekly];
+    let vm_cost_only =
+        TrayViewModel::build(&cost_only_state, Some(&snap), Some(&rl), None, false, 20, false);
+    assert!(vm_cost_only
+        .render_state
+        .entries
+        .iter()
+        .all(|e| e.id != PieChartId::Budget));
+    assert_eq!(vm_cost_only.render_state.entries.len(), 3);
+    assert!(vm_cost_only.render_state.entries.iter().all(|e| e.show_icon));
 }
 
 #[test]

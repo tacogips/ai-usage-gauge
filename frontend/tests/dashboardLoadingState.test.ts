@@ -82,12 +82,29 @@ describe("dashboard blocking state", () => {
     }))).toBe(false);
   });
 
-  test("keeps an explicitly requested range transition blocking", () => {
+  test("keeps an explicitly requested range transition blocking when no data is loaded yet", () => {
     expect(shouldBlockDashboard(blockInput({
       isInitialLoading: false,
       isRangeLoading: true,
+      hasAnyData: false,
       loadStatus: status("ready", false),
     }))).toBe(true);
+  });
+
+  test("unblocks immediately once any section has data even while collection or range loading continues", () => {
+    expect(shouldBlockDashboard(blockInput({
+      isInitialLoading: true,
+      isFetching: true,
+      hasAnyData: true,
+      loadStatus: status("loadingWeek", true),
+    }))).toBe(false);
+    expect(shouldBlockDashboard(blockInput({
+      isInitialLoading: false,
+      isRangeLoading: true,
+      isFetching: true,
+      hasAnyData: true,
+      loadStatus: status("ready", false),
+    }))).toBe(false);
   });
 });
 
